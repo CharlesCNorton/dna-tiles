@@ -2177,16 +2177,14 @@ Section TuringCompleteness.
 
 (** ** Turing Machine Definitions *)
 
-(** State set *)
-Parameter State : Type.
-Parameter State_eq_dec : forall (q1 q2 : State), {q1 = q2} + {q1 <> q2}.
+(** Generic types with decidable equality (constructive, no axioms) *)
+Context {State : Type}.
+Context {State_eq_dec : forall (q1 q2 : State), {q1 = q2} + {q1 <> q2}}.
 
-(** Tape alphabet *)
-Parameter TapeSymbol : Type.
-Parameter TapeSymbol_eq_dec : forall (a b : TapeSymbol), {a = b} + {a <> b}.
+Context {TapeSymbol : Type}.
+Context {TapeSymbol_eq_dec : forall (a b : TapeSymbol), {a = b} + {a <> b}}.
 
-(** Blank symbol *)
-Parameter blank : TapeSymbol.
+Context (blank : TapeSymbol).
 
 (** Tape head direction *)
 Inductive Direction : Type :=
@@ -2395,3 +2393,104 @@ Proof.
 Qed.
 
 End TuringCompleteness.
+
+(** * Concrete Turing Machine Instance *)
+
+(** For computational examples and concrete constructions, we instantiate
+    the generic theory with natural numbers. *)
+Module ConcreteTM.
+
+(** Concrete types *)
+Definition State : Type := nat.
+Definition State_eq_dec : forall (q1 q2 : State), {q1 = q2} + {q1 <> q2} := Nat.eq_dec.
+
+Definition TapeSymbol : Type := nat.
+Definition TapeSymbol_eq_dec : forall (a b : TapeSymbol), {a = b} + {a <> b} := Nat.eq_dec.
+
+Definition blank : TapeSymbol := 0.
+
+(** Explicit instantiation of all generic definitions *)
+Definition Tape : Type := Z -> TapeSymbol.
+Definition blank_tape : Tape := fun _ => blank.
+Definition tape_read (t : Tape) (pos : Z) : TapeSymbol := t pos.
+Definition tape_write (t : Tape) (pos : Z) (s : TapeSymbol) : Tape :=
+  fun pos' => if (pos =? pos')%Z then s else t pos'.
+
+Definition Transition : Type := State -> TapeSymbol -> option (State * TapeSymbol * Direction).
+
+Record TuringMachine : Type := mkTM {
+  tm_states : list State;
+  tm_alphabet : list TapeSymbol;
+  tm_transition : Transition;
+  tm_start : State;
+  tm_accept : State;
+  tm_reject : State
+}.
+
+Record Config : Type := mkConfig {
+  cfg_state : State;
+  cfg_tape : Tape;
+  cfg_pos : Z
+}.
+
+Definition init_config (M : TuringMachine) (input : list TapeSymbol) : Config :=
+  let init_tape := fun pos =>
+    match nth_error input (Z.to_nat pos) with
+    | Some s => s
+    | None => blank
+    end in
+  mkConfig (tm_start M) init_tape 0%Z.
+
+Definition move_head (pos : Z) (d : Direction) : Z :=
+  match d with
+  | Left => (pos - 1)%Z
+  | Right => (pos + 1)%Z
+  | Stay => pos
+  end.
+
+Definition step (M : TuringMachine) (c : Config) : option Config :=
+  let q := cfg_state c in
+  let t := cfg_tape c in
+  let pos := cfg_pos c in
+  let current_symbol := tape_read t pos in
+  match tm_transition M q current_symbol with
+  | None => None
+  | Some (q', s', d) =>
+      Some (mkConfig q' (tape_write t pos s') (move_head pos d))
+  end.
+
+Fixpoint steps (M : TuringMachine) (n : nat) (c : Config) : option Config :=
+  match n with
+  | O => Some c
+  | S n' =>
+      if State_eq_dec (cfg_state c) (tm_accept M) then Some c
+      else if State_eq_dec (cfg_state c) (tm_reject M) then Some c
+      else match step M c with
+           | None => None
+           | Some c' => steps M n' c'
+           end
+  end.
+
+Definition incrementer_transition : Transition :=
+  fun q a =>
+    match q, a with
+    | 0, 0 => Some (1, 1, Stay)
+    | 0, 1 => Some (0, 1, Right)
+    | 0, 2 => Some (1, 2, Stay)
+    | _, _ => None
+    end.
+
+Definition incrementer : TuringMachine :=
+  mkTM
+    [0; 1]
+    [0; 1; 2]
+    incrementer_transition
+    0
+    1
+    2.
+
+Eval compute in (init_config incrementer [1; 1; 1]).
+Eval compute in (step incrementer (init_config incrementer [1; 1; 1])).
+Eval compute in (steps incrementer 10 (init_config incrementer [1; 1; 1])).
+
+End ConcreteTM.
