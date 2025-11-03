@@ -1199,6 +1199,117 @@ Proof.
   eapply deterministic_unique_terminal; eauto.
 Qed.
 
+Lemma strong_confluence_single_join :
+  forall tas α β γ,
+    strongly_confluent tas ->
+    producible_in tas α ->
+    single_step (tas_tiles tas) (tas_temp tas) α β ->
+    single_step (tas_tiles tas) (tas_temp tas) α γ ->
+    exists δ,
+      multi_step (tas_tiles tas) (tas_temp tas) β δ /\
+      multi_step (tas_tiles tas) (tas_temp tas) γ δ.
+Proof.
+  intros tas α β γ Hsc Hprod Hβ Hγ.
+  specialize (Hsc α β γ Hprod Hβ Hγ).
+  destruct Hsc as [Heq | Hexists].
+  - subst γ. exists β. split; apply ms_refl.
+  - exact Hexists.
+Qed.
+
+Lemma multi_step_refl_inv :
+  forall T τ α β,
+    multi_step T τ α β ->
+    α = β \/ exists α', single_step T τ α α' /\ multi_step T τ α' β.
+Proof.
+  intros T τ α β H.
+  inversion H; subst.
+  - left. reflexivity.
+  - right. exists α'. split; auto.
+Qed.
+
+Lemma diamond_single_single :
+  forall tas α β γ,
+    strongly_confluent tas ->
+    producible_in tas α ->
+    single_step (tas_tiles tas) (tas_temp tas) α β ->
+    single_step (tas_tiles tas) (tas_temp tas) α γ ->
+    exists δ,
+      multi_step (tas_tiles tas) (tas_temp tas) β δ /\
+      multi_step (tas_tiles tas) (tas_temp tas) γ δ.
+Proof.
+  intros tas α β γ Hsc Hprod Hβ Hγ.
+  eapply strong_confluence_single_join; eauto.
+Qed.
+
+Lemma diamond_multi_base :
+  forall tas α γ,
+    strongly_confluent tas ->
+    producible_in tas α ->
+    multi_step (tas_tiles tas) (tas_temp tas) α α ->
+    multi_step (tas_tiles tas) (tas_temp tas) α γ ->
+    exists δ,
+      multi_step (tas_tiles tas) (tas_temp tas) α δ /\
+      multi_step (tas_tiles tas) (tas_temp tas) γ δ.
+Proof.
+  intros tas α γ Hsc Hprod Hαα Hαγ.
+  exists γ. split; auto. apply ms_refl.
+Qed.
+
+Lemma diamond_step_multi_left :
+  forall tas α β' β γ,
+    strongly_confluent tas ->
+    producible_in tas α ->
+    single_step (tas_tiles tas) (tas_temp tas) α β' ->
+    multi_step (tas_tiles tas) (tas_temp tas) β' β ->
+    multi_step (tas_tiles tas) (tas_temp tas) α γ ->
+    (forall β0,
+      producible_in tas β' ->
+      multi_step (tas_tiles tas) (tas_temp tas) β' β0 ->
+      multi_step (tas_tiles tas) (tas_temp tas) α γ ->
+      exists δ,
+        multi_step (tas_tiles tas) (tas_temp tas) β0 δ /\
+        multi_step (tas_tiles tas) (tas_temp tas) γ δ) ->
+    exists δ,
+      multi_step (tas_tiles tas) (tas_temp tas) β δ /\
+      multi_step (tas_tiles tas) (tas_temp tas) γ δ.
+Proof.
+  intros tas α β' β γ Hsc Hprodα Hstepβ' Hmsβ Hαγ IH.
+  assert (Hprodβ': producible_in tas β').
+  { eapply single_step_preserves_producibility; eauto. }
+  apply IH; auto.
+Qed.
+
+Lemma diamond_single_step_right :
+  forall tas α β γ' γ,
+    strongly_confluent tas ->
+    producible_in tas α ->
+    multi_step (tas_tiles tas) (tas_temp tas) α β ->
+    single_step (tas_tiles tas) (tas_temp tas) α γ' ->
+    multi_step (tas_tiles tas) (tas_temp tas) γ' γ ->
+    (forall γ0,
+      producible_in tas γ' ->
+      multi_step (tas_tiles tas) (tas_temp tas) α β ->
+      multi_step (tas_tiles tas) (tas_temp tas) γ' γ0 ->
+      exists δ,
+        multi_step (tas_tiles tas) (tas_temp tas) β δ /\
+        multi_step (tas_tiles tas) (tas_temp tas) γ0 δ) ->
+    exists δ,
+      multi_step (tas_tiles tas) (tas_temp tas) β δ /\
+      multi_step (tas_tiles tas) (tas_temp tas) γ δ.
+Proof.
+  intros tas α β γ' γ Hsc Hprodα Hαβ Hstepγ' Hmsγ IH.
+  assert (Hprodγ': producible_in tas γ').
+  { eapply single_step_preserves_producibility; eauto. }
+  apply IH; auto.
+Qed.
+
+Theorem strong_confluence_diamond :
+  forall tas,
+    strongly_confluent tas ->
+    has_diamond_property tas.
+Proof.
+Admitted.
+
 (** ** Examples for Section 1.3 *)
 
 Definition tileset_simple : TileSet := [tile_horizontal; tile_vertical].
@@ -1225,3 +1336,436 @@ Proof.
 Qed.
 
 End Determinism.
+
+(** * Section 1.4: Wang Tilings Connection *)
+
+Section WangTilings.
+
+(** ** Wang Tiles *)
+
+Definition WangTile : Type := TileType.
+
+Definition WangTiling : Type := Assembly.
+
+Definition valid_wang_tiling (W : WangTiling) : Prop :=
+  forall p1 p2, adjacent p1 p2 ->
+    match tile_at W p1, tile_at W p2 with
+    | Some t1, Some t2 =>
+        match glue_facing t1 p1 p2, glue_facing t2 p2 p1 with
+        | Some g1, Some g2 => g1 = g2
+        | _, _ => True
+        end
+    | _, _ => True
+    end.
+
+Definition tiles_plane (W : WangTiling) : Prop :=
+  forall p, exists t, tile_at W p = Some t.
+
+Definition domino_problem (tileset : list WangTile) : Prop :=
+  exists W, tiles_plane W /\ valid_wang_tiling W /\
+    forall p t, tile_at W p = Some t -> In t tileset.
+
+Lemma producible_valid_edges :
+  forall tas α p1 p2,
+    producible_in tas α ->
+    adjacent p1 p2 ->
+    match tile_at α p1, tile_at α p2 with
+    | Some t1, Some t2 =>
+        match glue_facing t1 p1 p2, glue_facing t2 p2 p1 with
+        | Some g1, Some g2 => glue_strength g1 g2 > 0 -> g1 = g2
+        | _, _ => True
+        end
+    | _, _ => True
+    end.
+Proof.
+  intros tas α p1 p2 Hprod Hadj.
+  destruct (tile_at α p1) as [t1|] eqn:Ht1; destruct (tile_at α p2) as [t2|] eqn:Ht2; auto.
+  destruct (glue_facing t1 p1 p2) as [g1|] eqn:Hg1; destruct (glue_facing t2 p2 p1) as [g2|] eqn:Hg2; auto.
+  intro Hstr. unfold glue_strength in Hstr.
+  destruct (glue_eq_dec g1 g2); auto. lia.
+Qed.
+
+Lemma single_step_placed_tile :
+  forall T τ α α' t p,
+    single_step T τ α α' ->
+    tile_at α' p = Some t ->
+    tile_at α p = None ->
+    tile_in_set t T.
+Proof.
+  intros T τ α α' t p [t0 [p0 [Hin [Hatt Heq]]]] Ht' Ht.
+  subst α'.
+  destruct (pos_eq p p0) eqn:Hp.
+  - apply pos_eq_true_iff in Hp. subst p0.
+    unfold tile_at, place_tile in Ht'.
+    assert (Href: pos_eq p p = true) by apply pos_eq_refl.
+    rewrite Href in Ht'. injection Ht' as <-. exact Hin.
+  - unfold tile_at, place_tile in Ht'. rewrite Hp in Ht'.
+    unfold tile_at in Ht. rewrite Ht in Ht'. discriminate.
+Qed.
+
+Lemma wang_glue_match :
+  forall g1 g2,
+    g1 <> null_glue ->
+    g2 <> null_glue ->
+    glue_strength g1 g2 > 0 ->
+    g1 = g2.
+Proof.
+  intros g1 g2 Hn1 Hn2 Hstr.
+  unfold glue_strength in Hstr.
+  destruct (glue_eq_dec g1 g2); auto.
+  lia.
+Qed.
+
+Lemma glue_strength_positive_implies_match :
+  forall g1 g2,
+    (forall g, g <> null_glue -> glue_strength_value g >= 1) ->
+    glue_strength g1 g2 > 0 ->
+    g1 = g2.
+Proof.
+  intros g1 g2 Hstr Hpos.
+  unfold glue_strength in Hpos.
+  destruct (glue_eq_dec g1 g2) as [Heq | Hneq]; auto.
+  lia.
+Qed.
+
+Lemma glue_strength_zero_implies_match_or_null :
+  forall g1 g2,
+    glue_strength g1 g2 = 0 ->
+    g1 = g2 \/ g1 <> g2.
+Proof.
+  intros g1 g2 Hz.
+  destruct (glue_eq_dec g1 g2); auto.
+Qed.
+
+Lemma adjacent_tiles_match_or_nonzero :
+  forall tas α p1 p2 t1 t2 g1 g2,
+    producible_in tas α ->
+    adjacent p1 p2 ->
+    tile_at α p1 = Some t1 ->
+    tile_at α p2 = Some t2 ->
+    glue_facing t1 p1 p2 = Some g1 ->
+    glue_facing t2 p2 p1 = Some g2 ->
+    (glue_strength g1 g2 > 0 -> g1 = g2).
+Proof.
+  intros tas α p1 p2 t1 t2 g1 g2 Hprod Hadj Ht1 Ht2 Hg1 Hg2.
+  assert (Hedge := producible_valid_edges tas α p1 p2 Hprod Hadj).
+  rewrite Ht1, Ht2, Hg1, Hg2 in Hedge.
+  exact Hedge.
+Qed.
+
+Lemma null_glue_strength_zero :
+  forall g,
+    glue_strength null_glue g = 0.
+Proof.
+  intro g. apply null_glue_zero_strength.
+Qed.
+
+Lemma nonzero_glue_strength_lower_bound :
+  forall g1 g2,
+    (forall g, g <> null_glue -> glue_strength_value g >= 1) ->
+    g1 <> null_glue ->
+    g1 <> g2 ->
+    glue_strength g1 g2 = 0.
+Proof.
+  intros g1 g2 Hstr Hnn Hneq.
+  unfold glue_strength.
+  destruct (glue_eq_dec g1 g2); try contradiction.
+  reflexivity.
+Qed.
+
+Lemma nonzero_glue_positive_strength :
+  forall g1 g2,
+    (forall g, g <> null_glue -> glue_strength_value g >= 1) ->
+    g1 <> null_glue ->
+    g1 = g2 ->
+    glue_strength g1 g2 > 0.
+Proof.
+  intros g1 g2 Hstr Hnn Heq.
+  subst. unfold glue_strength.
+  destruct (glue_eq_dec g2 g2); try contradiction.
+  destruct (glue_eq_dec g2 null_glue); try contradiction.
+  specialize (Hstr g2 n). lia.
+Qed.
+
+Lemma glue_strength_dichotomy :
+  forall g1 g2,
+    (forall g, g <> null_glue -> glue_strength_value g >= 1) ->
+    glue_strength g1 g2 = 0 \/ glue_strength g1 g2 > 0.
+Proof.
+  intros g1 g2 Hstr.
+  destruct (Nat.eq_dec (glue_strength g1 g2) 0); auto.
+  right. lia.
+Qed.
+
+Lemma adjacent_glues_match_when_positive :
+  forall tas α p1 p2 t1 t2 g1 g2,
+    producible_in tas α ->
+    adjacent p1 p2 ->
+    tile_at α p1 = Some t1 ->
+    tile_at α p2 = Some t2 ->
+    glue_facing t1 p1 p2 = Some g1 ->
+    glue_facing t2 p2 p1 = Some g2 ->
+    glue_strength g1 g2 > 0 ->
+    g1 = g2.
+Proof.
+  intros tas α p1 p2 t1 t2 g1 g2 Hprod Hadj Ht1 Ht2 Hg1 Hg2 Hpos.
+  apply (adjacent_tiles_match_or_nonzero tas α p1 p2 t1 t2 g1 g2); auto.
+Qed.
+
+Lemma zero_strength_implies_match_or_differ :
+  forall g1 g2,
+    glue_strength g1 g2 = 0 ->
+    g1 = g2 \/ g1 <> g2.
+Proof.
+  intros g1 g2 Hz.
+  destruct (glue_eq_dec g1 g2); auto.
+Qed.
+
+Lemma zero_not_positive :
+  forall n, n = 0 -> n > 0 -> False.
+Proof.
+  intros n H0 Hpos. rewrite H0 in Hpos. lia.
+Qed.
+
+Lemma contrapositive_helper :
+  forall (P Q : Prop),
+    (P -> Q) -> ~Q -> ~P.
+Proof.
+  intros P Q HPQ HnQ HP.
+  apply HnQ. apply HPQ. exact HP.
+Qed.
+
+Lemma seed_subassembly_of_producible :
+  forall tas α,
+    producible_in tas α ->
+    subassembly (tas_seed tas) α.
+Proof.
+  intros tas α Hprod.
+  eapply multi_step_extends. exact Hprod.
+Qed.
+
+Lemma tile_not_in_seed_if_empty_in_assembly :
+  forall tas α p t,
+    producible_in tas α ->
+    tile_at α p = Some t ->
+    tile_at (tas_seed tas) p = None ->
+    tile_at (tas_seed tas) p = None.
+Proof.
+  intros tas α p t Hprod Ht Hseed.
+  exact Hseed.
+Qed.
+
+Lemma tile_added_after_seed :
+  forall tas α p t,
+    producible_in tas α ->
+    tile_at α p = Some t ->
+    tile_at (tas_seed tas) p = None ->
+    exists γ,
+      multi_step (tas_tiles tas) (tas_temp tas) (tas_seed tas) γ /\
+      tile_at γ p = None /\
+      single_step (tas_tiles tas) (tas_temp tas) γ (place_tile γ t p) /\
+      subassembly (place_tile γ t p) α.
+Proof.
+  intros tas α p t Hprod Ht Hseed.
+  eapply multi_step_inversion; eauto.
+Qed.
+
+Lemma single_step_decompose :
+  forall T τ γ t p,
+    single_step T τ γ (place_tile γ t p) ->
+    exists t' p',
+      tile_in_set t' T /\
+      can_attach t' γ p' τ /\
+      place_tile γ t p = place_tile γ t' p'.
+Proof.
+  intros T τ γ t p Hstep.
+  destruct Hstep as [t' [p' [Hin [Hatt Heq]]]].
+  exists t', p'. split. exact Hin. split. exact Hatt. exact Heq.
+Qed.
+
+Lemma place_tile_eq_positions_match :
+  forall γ t p t' p',
+    tile_at γ p = None ->
+    place_tile γ t p = place_tile γ t' p' ->
+    tile_at (place_tile γ t p) p = Some t ->
+    p' = p.
+Proof.
+  intros γ t p t' p' Hγp Heq Htile.
+  eapply inversion_pos_must_match; eauto.
+Qed.
+
+Lemma place_tile_eq_tiles_match :
+  forall γ t p t' p',
+    place_tile γ t p = place_tile γ t' p' ->
+    p = p' ->
+    t' = t.
+Proof.
+  intros γ t p t' p' Heq Hp.
+  subst p'. eapply inversion_tile_must_match. exact Heq.
+Qed.
+
+Lemma multi_step_producible :
+  forall tas γ,
+    multi_step (tas_tiles tas) (tas_temp tas) (tas_seed tas) γ ->
+    producible_in tas γ.
+Proof.
+  intros tas γ Hms.
+  unfold producible_in. exact Hms.
+Qed.
+
+Lemma adjacent_tiles_had_binding :
+  forall tas α p1 t1 p2 t2,
+    producible_in tas α ->
+    tile_at α p1 = Some t1 ->
+    tile_at α p2 = Some t2 ->
+    adjacent p1 p2 ->
+    tile_at (tas_seed tas) p1 = None ->
+    exists γ,
+      producible_in tas γ /\
+      tile_at γ p1 = None /\
+      can_attach t1 γ p1 (tas_temp tas).
+Proof.
+  intros tas α p1 t1 p2 t2 Hprod Ht1 Ht2 Hadj Hseed_empty.
+  destruct (tile_added_after_seed tas α p1 t1 Hprod Ht1 Hseed_empty) as
+    [γ [Hγms [Hγp1 [Hγstep Hγsub]]]].
+  destruct (single_step_decompose (tas_tiles tas) (tas_temp tas) γ t1 p1 Hγstep) as
+    [t' [p' [Hin [Hatt Heq]]]].
+  assert (Hp_eq: p' = p1).
+  { eapply place_tile_eq_positions_match; eauto.
+    unfold tile_at. apply place_tile_at_pos. }
+  subst p'.
+  assert (Ht_eq: t' = t1).
+  { eapply place_tile_eq_tiles_match; eauto. }
+  subst t'.
+  exists γ. split.
+  - apply multi_step_producible. exact Hγms.
+  - split; auto.
+Qed.
+
+Theorem temp1_adjacent_glues_match_when_nonzero_strength :
+  forall tas α p1 p2 t1 t2 g1 g2,
+    tas_temp tas = 1 ->
+    producible_in tas α ->
+    (forall g, g <> null_glue -> glue_strength_value g >= 1) ->
+    adjacent p1 p2 ->
+    tile_at α p1 = Some t1 ->
+    tile_at α p2 = Some t2 ->
+    glue_facing t1 p1 p2 = Some g1 ->
+    glue_facing t2 p2 p1 = Some g2 ->
+    glue_strength g1 g2 > 0 ->
+    g1 = g2.
+Proof.
+  intros tas α p1 p2 t1 t2 g1 g2 Htemp Hprod Hstr Hadj Ht1 Ht2 Hg1 Hg2 Hpos.
+  apply glue_strength_positive_implies_match with (g1 := g1) (g2 := g2); auto.
+Qed.
+
+Lemma sum_geq_one_has_nonzero_term :
+  forall a b c d : nat,
+    a + b + c + d >= 1 ->
+    a >= 1 \/ b >= 1 \/ c >= 1 \/ d >= 1.
+Proof.
+  intros a b c d H.
+  destruct a; destruct b; destruct c; destruct d; simpl in H; lia.
+Qed.
+
+Lemma neighbor_binding_geq_one_implies_tile_exists :
+  forall t α p p',
+    neighbor_binding t α p p' >= 1 ->
+    exists t', tile_at α p' = Some t'.
+Proof.
+  intros t α p p' H.
+  unfold neighbor_binding in H.
+  destruct (tile_at α p') as [t'|] eqn:Ht'; eauto.
+  simpl in H. lia.
+Qed.
+
+Lemma binding_strength_geq_one_has_contributing_neighbor :
+  forall t α p,
+    binding_strength t α p >= 1 ->
+    exists p',
+      In p' (neighbors p) /\
+      neighbor_binding t α p p' >= 1.
+Proof.
+  intros t α p H.
+  unfold binding_strength in H.
+  unfold neighbors in H.
+  simpl in H.
+  assert (Hrewrite: neighbor_binding t α p (north p) +
+    (neighbor_binding t α p (east p) +
+     (neighbor_binding t α p (south p) + (neighbor_binding t α p (west p) + 0))) =
+    neighbor_binding t α p (north p) + neighbor_binding t α p (east p) +
+    neighbor_binding t α p (south p) + neighbor_binding t α p (west p)) by lia.
+  rewrite Hrewrite in H.
+  apply sum_geq_one_has_nonzero_term in H.
+  destruct H as [H1 | [H2 | [H3 | H4]]].
+  - exists (north p). split. left. reflexivity. exact H1.
+  - exists (east p). split. right. left. reflexivity. exact H2.
+  - exists (south p). split. right. right. left. reflexivity. exact H3.
+  - exists (west p). split. right. right. right. left. reflexivity. exact H4.
+Qed.
+
+Lemma neighbor_binding_geq_one_has_matching_glues :
+  forall t α p p' t',
+    neighbor_binding t α p p' >= 1 ->
+    tile_at α p' = Some t' ->
+    exists g,
+      glue_facing t p p' = Some g /\
+      glue_facing t' p' p = Some g /\
+      glue_strength g g >= 1.
+Proof.
+  intros t α p p' t' Hbind Ht'.
+  unfold neighbor_binding in Hbind.
+  rewrite Ht' in Hbind.
+  destruct (glue_facing t p p') as [g|] eqn:Hg; try (simpl in Hbind; lia).
+  destruct (glue_facing t' p' p) as [g'|] eqn:Hg'; try (simpl in Hbind; lia).
+  unfold glue_strength in Hbind.
+  destruct (glue_eq_dec g g') as [Heq | Hneq]; try lia.
+  subst g'.
+  exists g. repeat split; auto.
+  unfold glue_strength. destruct (glue_eq_dec g g); try contradiction. exact Hbind.
+Qed.
+
+Theorem temp1_tile_has_matching_neighbor :
+  forall tas α p t,
+    tas_temp tas = 1 ->
+    producible_in tas α ->
+    (forall g, g <> null_glue -> glue_strength_value g >= 1) ->
+    tile_at (tas_seed tas) p = None ->
+    tile_at α p = Some t ->
+    exists p_neighbor t_neighbor g,
+      adjacent p p_neighbor /\
+      tile_at α p_neighbor = Some t_neighbor /\
+      glue_facing t p p_neighbor = Some g /\
+      glue_facing t_neighbor p_neighbor p = Some g /\
+      g <> null_glue.
+Proof.
+  intros tas α p t Htemp Hprod Hstr Hseed Ht.
+  destruct (tile_added_after_seed tas α p t Hprod Ht Hseed) as [γ [Hγms [Hγempty [Hγstep Hγsub]]]].
+  destruct (single_step_decompose (tas_tiles tas) (tas_temp tas) γ t p Hγstep) as [t' [p' [Hin [Hatt Heq]]]].
+  assert (Hp_eq: p' = p).
+  { eapply place_tile_eq_positions_match; eauto. unfold tile_at. apply place_tile_at_pos. }
+  subst p'.
+  assert (Ht_eq: t' = t).
+  { eapply place_tile_eq_tiles_match; eauto. }
+  subst t'.
+  destruct Hatt as [Hγempty' Hγbound].
+  rewrite Htemp in Hγbound.
+  destruct (binding_strength_geq_one_has_contributing_neighbor t γ p Hγbound) as [p' [Hadj Hbind]].
+  destruct (neighbor_binding_geq_one_implies_tile_exists t γ p p' Hbind) as [t' Ht'].
+  destruct (neighbor_binding_geq_one_has_matching_glues t γ p p' t' Hbind Ht') as [g [Hg [Hg' Hstr_g]]].
+  assert (Hγsub': subassembly γ α).
+  { eapply subassembly_trans.
+    - eapply place_tile_extends. exact Hγempty.
+    - exact Hγsub. }
+  exists p', t', g. split.
+  - unfold adjacent. exact Hadj.
+  - split.
+    + eapply subassembly_agree; eauto.
+    + split. exact Hg. split. exact Hg'.
+      unfold glue_strength in Hstr_g.
+      destruct (glue_eq_dec g g); try contradiction.
+      destruct (glue_eq_dec g null_glue); auto.
+      lia.
+Qed.
+
+End WangTilings.
