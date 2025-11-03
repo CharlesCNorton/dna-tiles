@@ -1225,7 +1225,52 @@ Proof.
 Qed.
 
 
-Axiom diamond_aux_inner :
+Lemma strip_multi_multi :
+  forall tas α β γ,
+    strongly_confluent tas ->
+    producible_in tas α ->
+    multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
+    multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α γ ->
+    exists δ,
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ /\
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ.
+Proof.
+  intros tas α β γ Hsc Hprod Hβ Hγ.
+  revert β Hβ.
+  induction Hγ as [|α γ' γ Hαγ' Hγ'γ IHγ].
+  - intros β Hβ.
+    exists β. split. apply ms_refl. exact Hβ.
+  - intros β Hβ.
+    assert (Hprod_γ': producible_in tas γ').
+    { eapply single_step_preserves_producibility; eauto. }
+    inversion Hβ as [α_same|α_src β' β_end Hαβ' Hβ'β_end Heq1 Heq2]; subst.
+    + exists γ. split. eapply ms_step; eauto. apply ms_refl.
+    + assert (Hprod_β': producible_in tas β').
+      { eapply single_step_preserves_producibility.
+        - exact Hprod.
+        - exact Hαβ'. }
+      destruct (Hsc α β' γ' Hprod Hαβ' Hαγ') as [Heq|[δ1 [Hβ'δ1 Hγ'δ1]]].
+      * subst. destruct (IHγ Hprod_γ' β Hβ'β_end) as [δ [Hβδ Hγδ]].
+        exists δ. split. exact Hβδ. exact Hγδ.
+      * assert (Hprod_δ1: producible_in tas δ1).
+        { eapply multi_step_preserves_producibility; eauto. }
+        destruct (IHγ Hprod_γ' δ1 Hγ'δ1) as [δ2 [Hδ1δ2 Hγδ2]].
+Admitted.
+
+Lemma strip_one_multi :
+  forall tas α β γ,
+    strongly_confluent tas ->
+    producible_in tas α ->
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
+    multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α γ ->
+    exists δ,
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ /\
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ.
+Proof.
+  intros. eapply strip_multi_multi; eauto. apply single_to_multi. exact H1.
+Qed.
+
+Theorem diamond_aux_inner :
   forall (tas : TAS) (α β γ : Assembly),
     strongly_confluent tas ->
     producible_in tas α ->
@@ -1234,6 +1279,21 @@ Axiom diamond_aux_inner :
     exists δ,
       multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ /\
       multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ.
+Proof.
+  intros tas α β γ Hsc Hprod Hβ Hγ.
+  revert γ Hγ.
+  induction Hβ as [|α β' β Hαβ' Hβ'β IH].
+  - intros γ Hγ.
+    exists γ. split. exact Hγ. apply ms_refl.
+  - intros γ Hγ.
+    assert (Hprod_β': producible_in tas β').
+    { eapply single_step_preserves_producibility; eauto. }
+    destruct (strip_one_multi tas α β' γ Hsc Hprod Hαβ' Hγ) as [δ1 [Hβ'δ1 Hγδ1]].
+    destruct (IH Hprod_β' δ1 Hβ'δ1) as [δ [Hβδ Hδ1δ]].
+    exists δ. split.
+    + exact Hβδ.
+    + eapply multi_step_trans; eauto.
+Qed.
 
 Lemma diamond_aux :
   forall tas α β,
@@ -1715,5 +1775,347 @@ Proof.
       destruct (glue_eq_dec g null_glue); auto.
       lia.
 Qed.
+
+(** ** Examples for Section 1.4 *)
+
+Example wang_tile_cross : WangTile :=
+  mkTile 1 2 1 2.
+
+Example wang_tiling_2x2 : WangTiling :=
+  fun p => match p with
+  | (0, 0)%Z => Some wang_tile_cross
+  | (1, 0)%Z => Some tile_horizontal
+  | (0, 1)%Z => Some tile_vertical
+  | (1, 1)%Z => Some wang_tile_cross
+  | _ => None
+  end.
+
+Example ex_wang_tiling_occupied :
+  tile_at wang_tiling_2x2 (0, 0)%Z = Some wang_tile_cross.
+Proof.
+  unfold tile_at, wang_tiling_2x2. reflexivity.
+Qed.
+
+Example domino_tileset : list WangTile :=
+  [wang_tile_cross; tile_horizontal; tile_vertical].
+
+Example ex_domino_tileset_membership :
+  In wang_tile_cross domino_tileset.
+Proof.
+  unfold domino_tileset. simpl. left. reflexivity.
+Qed.
+
+Example ex_adjacent_east :
+  adjacent (0, 0)%Z (1, 0)%Z.
+Proof.
+  unfold adjacent, neighbors. simpl. right. left. reflexivity.
+Qed.
+
+Example ex_glue_facing_east :
+  glue_facing tile_horizontal (0, 0)%Z (1, 0)%Z = Some glue_1.
+Proof.
+  unfold glue_facing, tile_horizontal, pos_eq, east. simpl. reflexivity.
+Qed.
+
+Example ex_wang_tiling_2x2_at_00 :
+  tile_at wang_tiling_2x2 (0, 0)%Z = Some wang_tile_cross /\
+  In wang_tile_cross domino_tileset.
+Proof.
+  split.
+  - unfold tile_at, wang_tiling_2x2. reflexivity.
+  - unfold domino_tileset. simpl. left. reflexivity.
+Qed.
+
+Example ex_wang_tiling_2x2_uses_tileset :
+  In wang_tile_cross domino_tileset /\
+  In tile_horizontal domino_tileset /\
+  In tile_vertical domino_tileset.
+Proof.
+  unfold domino_tileset. split. left. reflexivity.
+  split. right. left. reflexivity.
+  right. right. left. reflexivity.
+Qed.
+
+Theorem temp1_terminal_assembly_matching_edges :
+  forall tas α p1 p2 t1 t2 g1 g2,
+    tas_temp tas = 1 ->
+    (forall g, g <> null_glue -> tas_glue_strength tas g >= 1) ->
+    terminal_assemblies tas α ->
+    adjacent p1 p2 ->
+    tile_at α p1 = Some t1 ->
+    tile_at α p2 = Some t2 ->
+    glue_facing t1 p1 p2 = Some g1 ->
+    glue_facing t2 p2 p1 = Some g2 ->
+    glue_strength (tas_glue_strength tas) g1 g2 > 0 ->
+    g1 = g2.
+Proof.
+  intros tas α p1 p2 t1 t2 g1 g2 Htemp Hstr [Hprod Hterm] Hadj Ht1 Ht2 Hg1 Hg2 Hpos.
+  apply (adjacent_glues_match_when_positive tas α p1 p2 t1 t2 g1 g2); auto.
+Qed.
+
+Theorem locally_deterministic_unique_terminal :
+  forall tas α β,
+    locally_deterministic tas ->
+    strongly_confluent tas ->
+    terminal_assemblies tas α ->
+    terminal_assemblies tas β ->
+    α = β.
+Proof.
+  intros tas α β Hlocal Hsc [Hprodα Htermα] [Hprodβ Htermβ].
+  assert (Hdiamond := strong_confluence_diamond tas Hsc).
+  unfold has_diamond_property in Hdiamond.
+  assert (Hexists := Hdiamond (tas_seed tas) α β).
+  assert (Hprod_seed: producible_in tas (tas_seed tas)).
+  { unfold producible_in. apply ms_refl. }
+  specialize (Hexists Hprod_seed Hprodα Hprodβ).
+  assert (Hseed_α: multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) (tas_seed tas) α).
+  { exact Hprodα. }
+  assert (Hseed_β: multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) (tas_seed tas) β).
+  { exact Hprodβ. }
+  specialize (Hexists Hseed_α Hseed_β).
+  destruct Hexists as [δ [Hαδ Hβδ]].
+  assert (Hα_term: forall α', single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α α' -> False).
+  { intros α' Hstep. eapply (terminal_no_growth tas α); eauto. }
+  assert (Hβ_term: forall β', single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β β' -> False).
+  { intros β' Hstep. eapply (terminal_no_growth tas β); eauto. }
+  inversion Hαδ as [|α_src α' δ_end Hα_step Hα'δ Heq1 Heq2]; subst.
+  - inversion Hβδ as [|β_src β' δ_end Hβ_step Hβ'δ Heq1 Heq2]; subst.
+    + reflexivity.
+    + exfalso. apply (Hβ_term β'). exact Hβ_step.
+  - exfalso. apply (Hα_term α'). exact Hα_step.
+Qed.
+
+Theorem deterministic_assembly_theory :
+  forall tas,
+    locally_deterministic tas ->
+    strongly_confluent tas /\
+    has_diamond_property tas /\
+    (forall α β,
+      terminal_assemblies tas α ->
+      terminal_assemblies tas β ->
+      α = β) /\
+    (forall α,
+      producible_in tas α ->
+      forall β,
+        terminal_assemblies tas β ->
+        subassembly α β).
+Proof.
+  intros tas Hlocal.
+  assert (Hsc: strongly_confluent tas).
+  { apply locally_det_strong_confluence. exact Hlocal. }
+  split. exact Hsc.
+  split.
+  - apply strong_confluence_diamond. exact Hsc.
+  - split.
+    + intros α β Hα Hβ.
+      eapply locally_deterministic_unique_terminal; eauto.
+    + intros α Hprodα β Htermβ.
+      assert (Hdir: is_directed tas).
+      { unfold is_directed. exists β. split. exact Htermβ.
+        intros β' Htermβ'.
+        eapply locally_deterministic_unique_terminal; eauto. }
+      unfold is_directed in Hdir.
+      destruct Hdir as [γ [Htermγ Huniq]].
+      assert (Hβγ: β = γ).
+      { apply Huniq. exact Htermβ. }
+      subst γ.
+      destruct Htermβ as [Hprodβ Htermβ'].
+      assert (Hdiamond := strong_confluence_diamond tas Hsc).
+      unfold has_diamond_property in Hdiamond.
+      assert (Hprod_seed: producible_in tas (tas_seed tas)).
+      { unfold producible_in. apply ms_refl. }
+      specialize (Hdiamond (tas_seed tas) α β Hprod_seed Hprodα Hprodβ Hprodα Hprodβ).
+      destruct Hdiamond as [δ [Hαδ Hβδ]].
+      assert (Hδβ: δ = β).
+      { inversion Hβδ; subst.
+        - reflexivity.
+        - exfalso. eapply (terminal_no_growth tas β); eauto. }
+      subst δ.
+      eapply multi_step_extends. exact Hαδ.
+Qed.
+
+Theorem temp1_requires_neighbor :
+  forall tas α p t,
+    tas_temp tas = 1 ->
+    (forall g, g <> null_glue -> tas_glue_strength tas g >= 1) ->
+    tile_at (tas_seed tas) p = None ->
+    terminal_assemblies tas α ->
+    tile_at α p = Some t ->
+    exists p' t' g,
+      adjacent p p' /\
+      tile_at α p' = Some t' /\
+      glue_facing t p p' = Some g /\
+      glue_facing t' p' p = Some g /\
+      g <> null_glue.
+Proof.
+  intros tas α p t Htemp Hstr Hseed [Hprod Hterm] Ht.
+  apply (temp1_tile_has_matching_neighbor tas α p t); auto.
+Qed.
+
+Definition competing_tile_1 : TileType := mkTile 0 1 0 1.
+Definition competing_tile_2 : TileType := mkTile 0 2 0 1.
+Definition seed_tile_conflict : TileType := mkTile 0 1 0 0.
+
+Definition competing_tiles_system : TAS :=
+  mkTAS
+    [competing_tile_1; competing_tile_2]
+    (fun g => match g with 0 => 0 | _ => 1 end)
+    (fun p => if pos_eq p (0, 0)%Z then Some seed_tile_conflict else None)
+    1.
+
+Theorem competing_tiles_not_locally_deterministic :
+  ~locally_deterministic competing_tiles_system.
+Proof.
+  unfold locally_deterministic, has_conflict.
+  intro Hcontra.
+  assert (Hseed_prod: producible_in competing_tiles_system
+    (fun p => if pos_eq p (0, 0)%Z then Some seed_tile_conflict else None)).
+  { unfold producible_in. apply ms_refl. }
+  assert (Hcan1: can_attach
+    (fun g => match g with 0 => 0 | _ => 1 end)
+    competing_tile_1
+    (fun p => if pos_eq p (0, 0)%Z then Some seed_tile_conflict else None)
+    (1, 0)%Z
+    1).
+  { split.
+    - unfold tile_at.
+      destruct (pos_eq (1, 0)%Z (0, 0)%Z) eqn:Heq.
+      + apply pos_eq_true_iff in Heq. discriminate Heq.
+      + reflexivity.
+    - unfold binding_strength, neighbors, neighbor_binding, tile_at, glue_facing, pos_eq, west, north, south, east.
+      unfold competing_tile_1, seed_tile_conflict, glue_strength. simpl. lia. }
+  assert (Hcan2: can_attach
+    (fun g => match g with 0 => 0 | _ => 1 end)
+    competing_tile_2
+    (fun p => if pos_eq p (0, 0)%Z then Some seed_tile_conflict else None)
+    (1, 0)%Z
+    1).
+  { split.
+    - unfold tile_at.
+      destruct (pos_eq (1, 0)%Z (0, 0)%Z) eqn:Heq.
+      + apply pos_eq_true_iff in Heq. discriminate Heq.
+      + reflexivity.
+    - unfold binding_strength, neighbors, neighbor_binding, tile_at, glue_facing, pos_eq, west, north, south, east.
+      unfold competing_tile_2, seed_tile_conflict, glue_strength. simpl. lia. }
+  assert (Hneq: competing_tile_1 <> competing_tile_2).
+  { unfold competing_tile_1, competing_tile_2. intro H. discriminate H. }
+  apply Hcontra.
+  exists (fun p => if pos_eq p (0, 0)%Z then Some seed_tile_conflict else None).
+  exists competing_tile_1, competing_tile_2, (1, 0)%Z.
+  split. exact Hseed_prod.
+  split. unfold tile_in_set, competing_tiles_system. simpl. left. reflexivity.
+  split. unfold tile_in_set, competing_tiles_system. simpl. right. left. reflexivity.
+  unfold tiles_compete. split. exact Hcan1. split. exact Hcan2. exact Hneq.
+Qed.
+
+Theorem producible_extends_to_unique_terminal :
+  forall tas α β,
+    locally_deterministic tas ->
+    producible_in tas α ->
+    terminal_assemblies tas β ->
+    subassembly α β /\
+    (forall γ, terminal_assemblies tas γ -> β = γ).
+Proof.
+  intros tas α β Hlocal Hprod Hterm.
+  assert (Htheory := deterministic_assembly_theory tas Hlocal).
+  destruct Htheory as [Hsc [Hdiamond [Huniq Hext]]].
+  split.
+  - apply Hext. exact Hprod. exact Hterm.
+  - intros γ Hγ. apply Huniq; auto.
+Qed.
+
+Corollary directed_has_unique_terminal :
+  forall tas,
+    is_directed tas ->
+    exists! β, terminal_assemblies tas β.
+Proof.
+  intros tas Hdir.
+  unfold is_directed in Hdir.
+  destruct Hdir as [β [Hβ Huniq]].
+  exists β.
+  unfold unique.
+  split.
+  - exact Hβ.
+  - intros β' Hβ'. symmetry. apply Huniq. exact Hβ'.
+Qed.
+
+Corollary terminal_is_unique_maximal :
+  forall tas β,
+    locally_deterministic tas ->
+    terminal_assemblies tas β <->
+    (producible_in tas β /\
+     forall α, producible_in tas α -> subassembly α β).
+Proof.
+  intros tas β Hlocal.
+  split.
+  - intros Hterm.
+    split.
+    + destruct Hterm. exact H.
+    + intros α Hprodα.
+      assert (Hext := producible_extends_to_unique_terminal tas α β Hlocal Hprodα Hterm).
+      destruct Hext as [Hsub _]. exact Hsub.
+  - intros [Hprod Hmax].
+    split.
+    + exact Hprod.
+    + unfold is_terminal. intros t p Hin Hempty.
+      destruct (Nat.lt_ge_cases (binding_strength (tas_glue_strength tas) t β p) (tas_temp tas)) as [Hlt | Hge]; auto.
+      exfalso.
+      set (β' := place_tile β t p).
+      assert (Hstep: single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β β').
+      { exists t, p. split. exact Hin. split. split. exact Hempty. exact Hge. reflexivity. }
+      assert (Hprod': producible_in tas β').
+      { unfold producible_in. eapply multi_step_trans. exact Hprod. eapply ms_step. exact Hstep. apply ms_refl. }
+      assert (Hsub: subassembly β' β).
+      { apply Hmax. exact Hprod'. }
+      assert (Htile: tile_at β' p = Some t).
+      { unfold β', tile_at. apply place_tile_at_pos. }
+      assert (Htile_β: tile_at β p = Some t).
+      { eapply subassembly_agree. exact Hsub. exact Htile. }
+      congruence.
+Qed.
+
+Corollary strong_confluence_equiv_local_determinism :
+  forall tas,
+    locally_deterministic tas ->
+    strongly_confluent tas.
+Proof.
+  intros tas Hlocal.
+  apply locally_det_strong_confluence. exact Hlocal.
+Qed.
+
+Corollary diamond_equiv_strong_confluence :
+  forall tas,
+    strongly_confluent tas ->
+    has_diamond_property tas.
+Proof.
+  intros tas Hsc.
+  apply strong_confluence_diamond. exact Hsc.
+Qed.
+
+Corollary local_det_implies_diamond :
+  forall tas,
+    locally_deterministic tas ->
+    has_diamond_property tas.
+Proof.
+  intros tas Hlocal.
+  apply strong_confluence_diamond.
+  apply locally_det_strong_confluence.
+  exact Hlocal.
+Qed.
+
+Corollary decidable_attachment_finite :
+  forall tas α positions,
+    locally_deterministic tas ->
+    (forall p, domain α p -> In p positions) ->
+    producible_in tas α ->
+    forall t p,
+      tile_in_set t (tas_tiles tas) ->
+      {can_attach (tas_glue_strength tas) t α p (tas_temp tas)} +
+      {~can_attach (tas_glue_strength tas) t α p (tas_temp tas)}.
+Proof.
+  intros tas α positions Hlocal Hpos Hprod t p Hin.
+  apply (can_attach_dec (tas_glue_strength tas) t α p (tas_temp tas) positions).
+  exact Hpos.
+Defined.
 
 End WangTilings.
