@@ -1235,26 +1235,6 @@ Lemma strip_multi_multi :
       multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ /\
       multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ.
 Proof.
-  intros tas α β γ Hsc Hprod Hβ Hγ.
-  revert β Hβ.
-  induction Hγ as [|α γ' γ Hαγ' Hγ'γ IHγ].
-  - intros β Hβ.
-    exists β. split. apply ms_refl. exact Hβ.
-  - intros β Hβ.
-    assert (Hprod_γ': producible_in tas γ').
-    { eapply single_step_preserves_producibility; eauto. }
-    inversion Hβ as [α_same|α_src β' β_end Hαβ' Hβ'β_end Heq1 Heq2]; subst.
-    + exists γ. split. eapply ms_step; eauto. apply ms_refl.
-    + assert (Hprod_β': producible_in tas β').
-      { eapply single_step_preserves_producibility.
-        - exact Hprod.
-        - exact Hαβ'. }
-      destruct (Hsc α β' γ' Hprod Hαβ' Hαγ') as [Heq|[δ1 [Hβ'δ1 Hγ'δ1]]].
-      * subst. destruct (IHγ Hprod_γ' β Hβ'β_end) as [δ [Hβδ Hγδ]].
-        exists δ. split. exact Hβδ. exact Hγδ.
-      * assert (Hprod_δ1: producible_in tas δ1).
-        { eapply multi_step_preserves_producibility; eauto. }
-        destruct (IHγ Hprod_γ' δ1 Hγ'δ1) as [δ2 [Hδ1δ2 Hγδ2]].
 Admitted.
 
 Lemma strip_one_multi :
@@ -2118,4 +2098,300 @@ Proof.
   exact Hpos.
 Defined.
 
+Eval compute in (binding_strength
+  (fun g => match g with 0 => 0 | _ => 1 end)
+  competing_tile_1
+  (fun p => if pos_eq p (0, 0)%Z then Some seed_tile_conflict else None)
+  (1, 0)%Z).
+
+Eval compute in (binding_strength
+  (fun g => match g with 0 => 0 | _ => 1 end)
+  competing_tile_2
+  (fun p => if pos_eq p (0, 0)%Z then Some seed_tile_conflict else None)
+  (1, 0)%Z).
+
+Eval compute in (TileType_eq_dec competing_tile_1 competing_tile_2).
+
+Definition assembly_step_0 := tas_seed tas_simple.
+Definition assembly_step_1 := place_tile assembly_step_0 tile_horizontal (1, 0)%Z.
+Definition assembly_step_2 := place_tile assembly_step_1 tile_horizontal (2, 0)%Z.
+
+Eval compute in (tile_at assembly_step_0 (0, 0)%Z).
+Eval compute in (tile_at assembly_step_1 (1, 0)%Z).
+Eval compute in (tile_at assembly_step_2 (2, 0)%Z).
+
+Eval compute in (binding_strength example_strength_fn tile_horizontal assembly_step_0 (1, 0)%Z).
+Eval compute in (binding_strength example_strength_fn tile_horizontal assembly_step_1 (2, 0)%Z).
+
+Fixpoint filter_attachable
+  (strength_fn : GlueType -> nat)
+  (tiles : list TileType)
+  (α : Assembly)
+  (positions : list Position)
+  (τ : nat)
+  : list (TileType * Position) :=
+  match tiles with
+  | [] => []
+  | t :: ts =>
+      let attachable_at_t :=
+        filter (fun p =>
+          match α p with
+          | None =>
+              if le_dec τ (binding_strength strength_fn t α p)
+              then true
+              else false
+          | Some _ => false
+          end) positions in
+      map (fun p => (t, p)) attachable_at_t ++ filter_attachable strength_fn ts α positions τ
+  end.
+
+Definition find_attachable_tiles
+  (tas : TAS)
+  (α : Assembly)
+  (positions : list Position)
+  : list (TileType * Position) :=
+  filter_attachable (tas_glue_strength tas) (tas_tiles tas) α positions (tas_temp tas).
+
+Eval compute in (find_attachable_tiles tas_simple assembly_step_0
+  [(0, 0)%Z; (1, 0)%Z; (0, 1)%Z; (-1, 0)%Z; (0, -1)%Z]).
+
+Eval compute in (find_attachable_tiles tas_simple assembly_step_1
+  [(0, 0)%Z; (1, 0)%Z; (2, 0)%Z; (0, 1)%Z; (1, 1)%Z]).
+
+Definition tas_temp1 : TAS :=
+  mkTAS tileset_simple example_strength_fn seed_single 1.
+
+Eval compute in (find_attachable_tiles tas_temp1 assembly_step_0
+  [(0, 0)%Z; (1, 0)%Z; (0, 1)%Z; (-1, 0)%Z; (0, -1)%Z]).
+
+Eval compute in (is_occupied assembly_step_0 (0, 0)%Z).
+Eval compute in (is_occupied assembly_step_0 (1, 0)%Z).
+
+Eval compute in (can_attach_dec example_strength_fn tile_horizontal assembly_step_0 (1, 0)%Z 1 []).
+
 End WangTilings.
+
+(** * Section 2.1: Turing Completeness at Temperature 2 *)
+
+Section TuringCompleteness.
+
+(** ** Turing Machine Definitions *)
+
+(** State set *)
+Parameter State : Type.
+Parameter State_eq_dec : forall (q1 q2 : State), {q1 = q2} + {q1 <> q2}.
+
+(** Tape alphabet *)
+Parameter TapeSymbol : Type.
+Parameter TapeSymbol_eq_dec : forall (a b : TapeSymbol), {a = b} + {a <> b}.
+
+(** Blank symbol *)
+Parameter blank : TapeSymbol.
+
+(** Tape head direction *)
+Inductive Direction : Type :=
+  | Left : Direction
+  | Right : Direction
+  | Stay : Direction.
+
+Definition Direction_eq_dec : forall (d1 d2 : Direction), {d1 = d2} + {d1 <> d2}.
+Proof.
+  decide equality.
+Defined.
+
+(** Transition function: State × TapeSymbol → State × TapeSymbol × Direction *)
+Definition Transition : Type := State -> TapeSymbol -> option (State * TapeSymbol * Direction).
+
+(** Turing Machine *)
+Record TuringMachine : Type := mkTM {
+  tm_states : list State;
+  tm_alphabet : list TapeSymbol;
+  tm_transition : Transition;
+  tm_start : State;
+  tm_accept : State;
+  tm_reject : State
+}.
+
+(** Well-formedness conditions *)
+Definition tm_wellformed (M : TuringMachine) : Prop :=
+  In (tm_start M) (tm_states M) /\
+  In (tm_accept M) (tm_states M) /\
+  In (tm_reject M) (tm_states M) /\
+  In blank (tm_alphabet M) /\
+  tm_accept M <> tm_reject M /\
+  (forall q a q' a' d,
+    tm_transition M q a = Some (q', a', d) ->
+    In q (tm_states M) /\
+    In a (tm_alphabet M) /\
+    In q' (tm_states M) /\
+    In a' (tm_alphabet M)).
+
+(** ** Tape Representation *)
+
+(** Tape: ℤ → TapeSymbol (infinite in both directions) *)
+Definition Tape : Type := Z -> TapeSymbol.
+
+(** Blank tape *)
+Definition blank_tape : Tape := fun _ => blank.
+
+(** Read symbol at position *)
+Definition tape_read (t : Tape) (pos : Z) : TapeSymbol := t pos.
+
+(** Write symbol at position *)
+Definition tape_write (t : Tape) (pos : Z) (s : TapeSymbol) : Tape :=
+  fun pos' => if (pos =? pos')%Z then s else t pos'.
+
+(** Tape equivalence: two tapes are equivalent if they differ only finitely *)
+Definition tape_equiv (t1 t2 : Tape) : Prop :=
+  exists lower upper : Z,
+    forall pos : Z,
+      (pos < lower)%Z \/ (pos > upper)%Z -> t1 pos = t2 pos.
+
+(** ** Configurations *)
+
+(** Configuration: current state, tape, and head position *)
+Record Config : Type := mkConfig {
+  cfg_state : State;
+  cfg_tape : Tape;
+  cfg_pos : Z
+}.
+
+(** Initial configuration *)
+Definition init_config (M : TuringMachine) (input : list TapeSymbol) : Config :=
+  let init_tape := fun pos =>
+    match nth_error input (Z.to_nat pos) with
+    | Some s => s
+    | None => blank
+    end in
+  mkConfig (tm_start M) init_tape 0%Z.
+
+(** Halting states *)
+Definition is_halting_state (M : TuringMachine) (q : State) : Prop :=
+  q = tm_accept M \/ q = tm_reject M.
+
+(** Accepting configuration *)
+Definition is_accepting (M : TuringMachine) (c : Config) : Prop :=
+  cfg_state c = tm_accept M.
+
+(** Rejecting configuration *)
+Definition is_rejecting (M : TuringMachine) (c : Config) : Prop :=
+  cfg_state c = tm_reject M.
+
+(** ** Transition Relation *)
+
+(** Move head according to direction *)
+Definition move_head (pos : Z) (d : Direction) : Z :=
+  match d with
+  | Left => (pos - 1)%Z
+  | Right => (pos + 1)%Z
+  | Stay => pos
+  end.
+
+(** Single step transition *)
+Definition step (M : TuringMachine) (c : Config) : option Config :=
+  let q := cfg_state c in
+  let t := cfg_tape c in
+  let pos := cfg_pos c in
+  let current_symbol := tape_read t pos in
+  match tm_transition M q current_symbol with
+  | None => None
+  | Some (q', s', d) =>
+      Some (mkConfig q' (tape_write t pos s') (move_head pos d))
+  end.
+
+(** Multi-step execution (n steps) *)
+Fixpoint steps (M : TuringMachine) (n : nat) (c : Config) : option Config :=
+  match n with
+  | O => Some c
+  | S n' =>
+      if State_eq_dec (cfg_state c) (tm_accept M) then Some c
+      else if State_eq_dec (cfg_state c) (tm_reject M) then Some c
+      else match step M c with
+           | None => None
+           | Some c' => steps M n' c'
+           end
+  end.
+
+(** Reflexive transitive closure of step relation *)
+Inductive steps_star (M : TuringMachine) : Config -> Config -> Prop :=
+  | steps_refl : forall c, steps_star M c c
+  | steps_step : forall c c' c'',
+      step M c = Some c' ->
+      steps_star M c' c'' ->
+      steps_star M c c''.
+
+(** Machine accepts input *)
+Definition tm_accepts (M : TuringMachine) (input : list TapeSymbol) : Prop :=
+  exists c,
+    steps_star M (init_config M input) c /\
+    is_accepting M c.
+
+(** Machine rejects input *)
+Definition tm_rejects (M : TuringMachine) (input : list TapeSymbol) : Prop :=
+  exists c,
+    steps_star M (init_config M input) c /\
+    is_rejecting M c.
+
+(** Machine halts on input *)
+Definition tm_halts (M : TuringMachine) (input : list TapeSymbol) : Prop :=
+  exists c,
+    steps_star M (init_config M input) c /\
+    is_halting_state M (cfg_state c).
+
+(** ** Basic Theorems about TM Semantics *)
+
+Theorem steps_star_trans :
+  forall M c1 c2 c3,
+    steps_star M c1 c2 ->
+    steps_star M c2 c3 ->
+    steps_star M c1 c3.
+Proof.
+  intros M c1 c2 c3 H12 H23.
+  induction H12.
+  - exact H23.
+  - eapply steps_step. exact H. apply IHsteps_star. exact H23.
+Qed.
+
+Theorem step_preserves_wellformed :
+  forall M c c',
+    tm_wellformed M ->
+    step M c = Some c' ->
+    In (cfg_state c) (tm_states M) ->
+    In (cfg_state c') (tm_states M).
+Proof.
+  intros M c c' Hwf Hstep Hin.
+  unfold step in Hstep.
+  destruct (tm_transition M (cfg_state c) (tape_read (cfg_tape c) (cfg_pos c))) eqn:Htrans.
+  - destruct p as [[q' s'] d].
+    injection Hstep as <-.
+    simpl.
+    unfold tm_wellformed in Hwf.
+    destruct Hwf as [_ [_ [_ [_ [_ Htrans_wf]]]]].
+    specialize (Htrans_wf (cfg_state c) (tape_read (cfg_tape c) (cfg_pos c)) q' s' d Htrans).
+    destruct Htrans_wf as [_ [_ [Hq' _]]].
+    exact Hq'.
+  - discriminate.
+Qed.
+
+Theorem tape_write_read :
+  forall t pos s,
+    tape_read (tape_write t pos s) pos = s.
+Proof.
+  intros t pos s.
+  unfold tape_read, tape_write.
+  rewrite Z.eqb_refl. reflexivity.
+Qed.
+
+Theorem tape_write_read_neq :
+  forall t pos pos' s,
+    pos <> pos' ->
+    tape_read (tape_write t pos s) pos' = tape_read t pos'.
+Proof.
+  intros t pos pos' s Hneq.
+  unfold tape_read, tape_write.
+  destruct (Z.eqb pos pos') eqn:Heq.
+  - apply Z.eqb_eq in Heq. contradiction.
+  - reflexivity.
+Qed.
+
+End TuringCompleteness.
