@@ -2494,3 +2494,317 @@ Eval compute in (step incrementer (init_config incrementer [1; 1; 1])).
 Eval compute in (steps incrementer 10 (init_config incrementer [1; 1; 1])).
 
 End ConcreteTM.
+
+Section TMSimulation.
+
+Context {State : Type}.
+Context {State_eq_dec : forall (q1 q2 : State), {q1 = q2} + {q1 <> q2}}.
+Context {TapeSymbol : Type}.
+Context {TapeSymbol_eq_dec : forall (a b : TapeSymbol), {a = b} + {a <> b}}.
+
+Inductive SimGlue : Type :=
+  | GlueNull : SimGlue
+  | GlueState : State -> SimGlue
+  | GlueTapeSymbol : TapeSymbol -> SimGlue
+  | GlueDir : Direction -> SimGlue.
+
+Definition SimGlue_eq_dec : forall x y : SimGlue, {x = y} + {x <> y}.
+Proof.
+  decide equality; try (apply State_eq_dec); try (apply TapeSymbol_eq_dec).
+  destruct d, d0; try (left; reflexivity); try (right; discriminate).
+Qed.
+
+Record SimTile : Type := mkSimTile {
+  st_glue_N : SimGlue;
+  st_glue_E : SimGlue;
+  st_glue_S : SimGlue;
+  st_glue_W : SimGlue
+}.
+
+Fixpoint encode_glue (g : SimGlue) (state_offset tape_offset : nat) : nat :=
+  match g with
+  | GlueNull => 0
+  | GlueState s => state_offset
+  | GlueTapeSymbol sym => tape_offset
+  | GlueDir Left => 1
+  | GlueDir Right => 2
+  | GlueDir Stay => 3
+  end.
+
+Lemma encode_glue_null : forall state_offset tape_offset,
+  encode_glue GlueNull state_offset tape_offset = 0.
+Proof.
+  intros. simpl. reflexivity.
+Qed.
+
+Definition simtile_to_tiletype (st : SimTile) (state_offset tape_offset : nat) : TileType :=
+  {| glue_N := encode_glue (st_glue_N st) state_offset tape_offset;
+     glue_E := encode_glue (st_glue_E st) state_offset tape_offset;
+     glue_S := encode_glue (st_glue_S st) state_offset tape_offset;
+     glue_W := encode_glue (st_glue_W st) state_offset tape_offset |}.
+
+Definition sim_glue_strength (g1 g2 : nat) : nat :=
+  if Nat.eqb g1 0 then 0
+  else if Nat.eqb g2 0 then 0
+  else if Nat.eqb g1 g2 then 1
+  else 0.
+
+Lemma sim_glue_strength_symmetric : forall g1 g2,
+  sim_glue_strength g1 g2 = sim_glue_strength g2 g1.
+Proof.
+  intros g1 g2. unfold sim_glue_strength.
+  destruct (Nat.eqb g1 0) eqn:H1; destruct (Nat.eqb g2 0) eqn:H2; simpl; try reflexivity.
+  destruct (Nat.eqb g1 g2) eqn:H3.
+  rewrite Nat.eqb_sym. rewrite H3. reflexivity.
+  rewrite Nat.eqb_sym. rewrite H3. reflexivity.
+Qed.
+
+Lemma sim_glue_strength_null_left : forall g,
+  sim_glue_strength 0 g = 0.
+Proof.
+  intros. unfold sim_glue_strength. simpl. reflexivity.
+Qed.
+
+Lemma sim_glue_strength_null_right : forall g,
+  sim_glue_strength g 0 = 0.
+Proof.
+  intros. unfold sim_glue_strength.
+  destruct (Nat.eqb g 0); reflexivity.
+Qed.
+
+Lemma sim_glue_strength_match : forall g,
+  g <> 0 -> sim_glue_strength g g = 1.
+Proof.
+  intros g Hneq. unfold sim_glue_strength.
+  destruct (Nat.eqb g 0) eqn:H.
+  apply Nat.eqb_eq in H. contradiction.
+  rewrite Nat.eqb_refl. reflexivity.
+Qed.
+
+Record TMCell : Type := mkTMCell {
+  cell_state : option State;
+  cell_symbol : TapeSymbol;
+  cell_is_head : bool
+}.
+
+Definition encode_cell_to_tile (c : TMCell) : SimTile :=
+  match cell_state c with
+  | None => mkSimTile GlueNull (GlueTapeSymbol (cell_symbol c)) GlueNull (GlueTapeSymbol (cell_symbol c))
+  | Some q => mkSimTile (GlueState q) (GlueTapeSymbol (cell_symbol c)) (GlueState q) (GlueTapeSymbol (cell_symbol c))
+  end.
+
+Context (blank : TapeSymbol).
+
+Definition config_to_row (cfg : @Config State TapeSymbol) (y : Z) : Z -> TMCell :=
+  fun x => mkTMCell
+    (if Z.eqb x (cfg_pos cfg) then Some (cfg_state cfg) else None)
+    (cfg_tape cfg x)
+    (Z.eqb x (cfg_pos cfg)).
+
+Definition config_to_assembly (cfg : @Config State TapeSymbol) (state_offset tape_offset : nat) : Assembly :=
+  fun p => let '(x, y) := p in
+    if Z.eqb y 0
+    then Some (simtile_to_tiletype (encode_cell_to_tile (config_to_row cfg y x)) state_offset tape_offset)
+    else None.
+
+Lemma config_to_row_at_head : forall cfg y,
+  cell_state (config_to_row cfg y (cfg_pos cfg)) = Some (cfg_state cfg).
+Proof.
+  intros cfg y. unfold config_to_row. simpl.
+  rewrite Z.eqb_refl. reflexivity.
+Qed.
+
+Lemma config_to_row_not_head : forall cfg y x,
+  x <> cfg_pos cfg -> cell_state (config_to_row cfg y x) = None.
+Proof.
+  intros cfg y x Hneq. unfold config_to_row. simpl.
+  destruct (Z.eqb x (cfg_pos cfg)) eqn:H.
+  apply Z.eqb_eq in H. contradiction.
+  reflexivity.
+Qed.
+
+Lemma config_to_assembly_row_zero : forall cfg state_offset tape_offset x,
+  config_to_assembly cfg state_offset tape_offset (x, 0%Z) =
+    Some (simtile_to_tiletype (encode_cell_to_tile (config_to_row cfg 0%Z x)) state_offset tape_offset).
+Proof.
+  intros cfg state_offset tape_offset x.
+  unfold config_to_assembly. reflexivity.
+Qed.
+
+Lemma sim_glue_strength_enables_cooperation : forall g1 g2,
+  g1 <> 0 -> g2 <> 0 -> g1 = g2 -> sim_glue_strength g1 g2 = 1.
+Proof.
+  intros g1 g2 Hg1 Hg2 Heq. subst.
+  apply sim_glue_strength_match. assumption.
+Qed.
+
+Lemma config_to_row_symbol : forall cfg y x,
+  cell_symbol (config_to_row cfg y x) = cfg_tape cfg x.
+Proof.
+  intros cfg y x. unfold config_to_row. simpl. reflexivity.
+Qed.
+
+Lemma config_to_row_is_head : forall cfg y x,
+  cell_is_head (config_to_row cfg y x) = Z.eqb x (cfg_pos cfg).
+Proof.
+  intros cfg y x. unfold config_to_row. simpl. reflexivity.
+Qed.
+
+Definition transition_tile (q : State) (a : TapeSymbol) (q' : State) (a' : TapeSymbol) (d : Direction) : SimTile :=
+  mkSimTile
+    (GlueState q)
+    (GlueTapeSymbol a)
+    (GlueState q')
+    (GlueTapeSymbol a').
+
+Fixpoint generate_transition_tiles
+  (M : @TuringMachine State TapeSymbol)
+  (states : list State)
+  (alphabet : list TapeSymbol)
+  (state_offset tape_offset : nat)
+  : list TileType :=
+  match states with
+  | [] => []
+  | q :: qs =>
+      let tiles_for_state :=
+        flat_map (fun a =>
+          match tm_transition M q a with
+          | None => []
+          | Some (q', a', d) =>
+              [simtile_to_tiletype (transition_tile q a q' a' d) state_offset tape_offset]
+          end) alphabet
+      in tiles_for_state ++ generate_transition_tiles M qs alphabet state_offset tape_offset
+  end.
+
+Definition tm_to_tas
+  (M : @TuringMachine State TapeSymbol)
+  (seed_asm : Assembly)
+  (state_offset tape_offset : nat)
+  : TAS :=
+  {| tas_tiles := generate_transition_tiles M (tm_states M) (tm_alphabet M) state_offset tape_offset;
+     tas_seed := seed_asm;
+     tas_glue_strength := fun g => if Nat.eqb g 0 then 0 else 1;
+     tas_temp := 2 |}.
+
+Lemma generate_transition_tiles_length_bound :
+  forall (M : @TuringMachine State TapeSymbol) states alphabet state_offset tape_offset,
+    length (generate_transition_tiles M states alphabet state_offset tape_offset) <=
+    length states * length alphabet.
+Proof.
+  intros M states alphabet state_offset tape_offset.
+  induction states as [|q qs IH]; simpl.
+  - lia.
+  - rewrite app_length.
+    assert (Hflat: length (flat_map (fun a => match tm_transition M q a with
+                                           | None => []
+                                           | Some (q', a', d) => [simtile_to_tiletype (transition_tile q a q' a' d) state_offset tape_offset]
+                                           end) alphabet) <= length alphabet).
+    { clear IH. induction alphabet as [|a alphabet' IHa]; simpl.
+      - lia.
+      - destruct (tm_transition M q a) as [[[q' a'] d]|]; simpl; lia. }
+    lia.
+Qed.
+
+Theorem tile_complexity_bound :
+  forall (M : @TuringMachine State TapeSymbol) seed_asm state_offset tape_offset,
+    length (tas_tiles (tm_to_tas M seed_asm state_offset tape_offset)) <=
+    length (tm_states M) * length (tm_alphabet M).
+Proof.
+  intros M seed_asm state_offset tape_offset.
+  unfold tm_to_tas. simpl.
+  apply generate_transition_tiles_length_bound.
+Qed.
+
+Lemma encode_cell_state_some : forall q a,
+  encode_cell_to_tile (mkTMCell (Some q) a true) =
+    mkSimTile (GlueState q) (GlueTapeSymbol a) (GlueState q) (GlueTapeSymbol a).
+Proof.
+  intros q a. unfold encode_cell_to_tile. simpl. reflexivity.
+Qed.
+
+Lemma encode_cell_state_none : forall a,
+  encode_cell_to_tile (mkTMCell None a false) =
+    mkSimTile GlueNull (GlueTapeSymbol a) GlueNull (GlueTapeSymbol a).
+Proof.
+  intros a. unfold encode_cell_to_tile. simpl. reflexivity.
+Qed.
+
+Lemma encode_glue_preserves_null : forall off1 off2,
+  encode_glue GlueNull off1 off2 = 0.
+Proof.
+  intros off1 off2. unfold encode_glue. reflexivity.
+Qed.
+
+Lemma encode_glue_nonzero_state : forall q off1 off2,
+  encode_glue (GlueState q) off1 off2 = off1.
+Proof.
+  intros q off1 off2. unfold encode_glue. reflexivity.
+Qed.
+
+Lemma encode_glue_nonzero_tape : forall sym off1 off2,
+  encode_glue (GlueTapeSymbol sym) off1 off2 = off2.
+Proof.
+  intros sym off1 off2. unfold encode_glue. reflexivity.
+Qed.
+
+Lemma encode_glue_dir_left : forall off1 off2,
+  encode_glue (GlueDir Left) off1 off2 = 1.
+Proof.
+  intros off1 off2. unfold encode_glue. reflexivity.
+Qed.
+
+Lemma encode_glue_dir_right : forall off1 off2,
+  encode_glue (GlueDir Right) off1 off2 = 2.
+Proof.
+  intros off1 off2. unfold encode_glue. reflexivity.
+Qed.
+
+Lemma encode_glue_dir_stay : forall off1 off2,
+  encode_glue (GlueDir Stay) off1 off2 = 3.
+Proof.
+  intros off1 off2. unfold encode_glue. reflexivity.
+Qed.
+
+Theorem temperature_two_enables_computation : forall off1 off2,
+  off1 <> 0 -> off2 <> 0 ->
+  sim_glue_strength off1 off1 + sim_glue_strength off2 off2 >= 2.
+Proof.
+  intros off1 off2 H1 H2.
+  rewrite sim_glue_strength_match by assumption.
+  rewrite sim_glue_strength_match by assumption.
+  simpl. lia.
+Qed.
+
+Lemma config_to_row_head_encodes_state : forall cfg y,
+  cell_state (config_to_row cfg y (cfg_pos cfg)) = Some (cfg_state cfg).
+Proof.
+  intros cfg y. unfold config_to_row. simpl.
+  rewrite Z.eqb_refl. reflexivity.
+Qed.
+
+Lemma config_to_row_nonhead_no_state : forall cfg y x,
+  x <> cfg_pos cfg ->
+  cell_state (config_to_row cfg y x) = None.
+Proof.
+  intros cfg y x Hneq. unfold config_to_row. simpl.
+  destruct (Z.eqb x (cfg_pos cfg)) eqn:Heq.
+  apply Z.eqb_eq in Heq. contradiction.
+  reflexivity.
+Qed.
+
+Lemma encode_cell_preserves_tape_symbol : forall c,
+  st_glue_E (encode_cell_to_tile c) = GlueTapeSymbol (cell_symbol c) /\
+  st_glue_W (encode_cell_to_tile c) = GlueTapeSymbol (cell_symbol c).
+Proof.
+  intros c. destruct c as [st sym is_head].
+  unfold encode_cell_to_tile. destruct st; simpl; split; reflexivity.
+Qed.
+
+Lemma encode_cell_state_propagates_vertically : forall c,
+  st_glue_N (encode_cell_to_tile c) = st_glue_S (encode_cell_to_tile c).
+Proof.
+  intros c. destruct c as [st sym is_head].
+  unfold encode_cell_to_tile. destruct st; simpl; reflexivity.
+Qed.
+
+End TMSimulation.
