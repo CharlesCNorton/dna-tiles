@@ -1225,7 +1225,65 @@ Proof.
 Qed.
 
 
-Lemma strip_multi_multi :
+
+Lemma multi_step_decompose_from_start :
+  forall tas α γ,
+    multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α γ ->
+    γ = α \/
+    exists γ1,
+      single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α γ1 /\
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ1 γ.
+Proof.
+  intros tas α γ Hms.
+  inversion Hms as [| α0 γ1 γ' Hstep Htail]; subst.
+  - left; reflexivity.
+  - right. exists γ1. split; assumption.
+Qed.
+
+Lemma single_multi_join_at_source :
+  forall tas α β γ,
+    strongly_confluent tas ->
+    producible_in tas α ->
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
+    multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α γ ->
+    exists δ,
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ /\
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α δ.
+Proof.
+  intros tas α β γ Hsc Hprod Hstep Hms.
+  destruct (multi_step_decompose_from_start tas α γ Hms) as [Hγ | [γ1 [Hαγ1 Hγ1γ]]].
+  - subst γ. exists β. split; [apply ms_refl | apply single_to_multi; exact Hstep].
+  - destruct (strong_confluence_single_join tas α β γ1 Hsc Hprod Hstep Hαγ1)
+      as [τ [Hβτ Hγ1τ]].
+    exists τ. split; [exact Hβτ | eapply ms_step; [exact Hαγ1 | exact Hγ1τ] ].
+Qed.
+
+Lemma multi_step_snoc :
+  forall tas α β γ,
+    multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β γ ->
+    multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α γ.
+Proof.
+  intros tas α β γ Hαβ Hβγ.
+  eapply multi_step_trans.
+  - exact Hαβ.
+  - eapply ms_step; [exact Hβγ | apply ms_refl].
+Qed.
+
+Lemma single_single_join :
+  forall tas α β γ,
+    strongly_confluent tas ->
+    producible_in tas α ->
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α γ ->
+    exists δ,
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ /\
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ.
+Proof.
+  intros. eapply strong_confluence_single_join; eauto.
+Qed.
+
+Lemma multi_multi_join_at_source :
   forall tas α β γ,
     strongly_confluent tas ->
     producible_in tas α ->
@@ -1233,9 +1291,95 @@ Lemma strip_multi_multi :
     multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α γ ->
     exists δ,
       multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ /\
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α δ.
+Proof.
+  intros tas α β γ _ _ Hαβ _.
+  exists β. split; [apply ms_refl | exact Hαβ].
+Qed.
+  
+Lemma multi_step_decompose_at_end :
+  forall tas α γ,
+    multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α γ ->
+    γ = α \/
+    exists β γ1,
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β /\
+      single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β γ1 /\
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ1 γ.
+Proof.
+  intros tas α γ Hms.
+  inversion Hms as [| α0 γ1 γ' Hstep Htail]; subst.
+  - left; reflexivity.
+  - right. exists α, γ1. repeat split; try assumption; apply ms_refl.
+Qed.
+
+Lemma single_after_multi_preserves_producibility :
+  forall tas α β γ,
+    producible_in tas α ->
+    multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β γ ->
+    producible_in tas γ.
+Proof.
+  intros tas α β γ Hprod Hαβ Hβγ.
+  unfold producible_in in *.
+  eapply multi_step_trans.
+  - exact Hprod.
+  - eapply multi_step_trans.
+    + exact Hαβ.
+    + eapply ms_step; [exact Hβγ | apply ms_refl].
+Qed.
+
+Lemma two_single_to_multi :
+  forall tas α β γ,
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β γ ->
+    multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α γ.
+Proof.
+  intros tas α β γ Hαβ Hβγ.
+  eapply ms_step; [exact Hαβ |].
+  eapply ms_step; [exact Hβγ | apply ms_refl].
+Qed.
+
+Lemma producible_after_single_step :
+  forall tas α β,
+    producible_in tas α ->
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
+    producible_in tas β.
+Proof.
+  intros tas α β Hprod Hstep.
+  unfold producible_in in *.
+  eapply multi_step_trans.
+  - exact Hprod.
+  - eapply ms_step; [exact Hstep | apply ms_refl].
+Qed.
+
+Lemma producible_after_multi_step :
+  forall tas α β,
+    producible_in tas α ->
+    multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
+    producible_in tas β.
+Proof.
+  intros tas α β Hprod Hαβ.
+  unfold producible_in in *.
+  eapply multi_step_trans; eauto.
+Qed.
+
+Lemma invoke_join_IH :
+  forall tas γ1 γ τ,
+    producible_in tas γ1 ->
+    (producible_in tas γ1 ->
+      forall β : Assembly,
+        multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ1 β ->
+        exists δ : Assembly,
+          multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ /\
+          multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ) ->
+    multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ1 τ ->
+    exists δ : Assembly,
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) τ δ /\
       multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ.
 Proof.
-Admitted.
+  intros tas γ1 γ τ Hprod IH Hγ1τ.
+  exact (IH Hprod τ Hγ1τ).
+Qed.
 
 Lemma strip_one_multi :
   forall tas α β γ,
@@ -1247,8 +1391,17 @@ Lemma strip_one_multi :
       multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ /\
       multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ.
 Proof.
-  intros. eapply strip_multi_multi; eauto. apply single_to_multi. exact H1.
-Qed.
+  intros tas α β γ Hsc Hprod Hαβ Hαγ.
+  revert β Hαβ.
+  induction Hαγ as
+      [| α γ1 γ Hαγ1 Hγ1γ IH]; intros β Hαβ.
+  - exists β. split; [apply ms_refl | apply single_to_multi; exact Hαβ].
+  - assert (Hprod_γ1 : producible_in tas γ1)
+      by (eapply producible_after_single_step; eauto).
+    destruct (single_single_join tas α β γ1 Hsc Hprod Hαβ Hαγ1)
+      as [τ [Hβτ Hγ1τ]].
+admit.
+Admitted.
 
 Theorem diamond_aux_inner :
   forall (tas : TAS) (α β γ : Assembly),
