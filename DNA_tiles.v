@@ -4882,8 +4882,52 @@ Proof.
   exists 3, c. split. exact Hsteps. left. exact Hstate.
 Qed.
 
-Theorem halting_problem_undecidable : ~halting_decidable.
+Lemma bool_not_self_contradicts : forall b : bool, b = negb b -> False.
 Proof.
+  intros b H.
+  destruct b; simpl in H; discriminate.
+Qed.
+
+Definition encode_tm (M : ConcreteTM.TuringMachine) : list nat :=
+  [ConcreteTM.tm_start M; ConcreteTM.tm_accept M; ConcreteTM.tm_reject M].
+
+Lemma incrementer_accept_reject_distinct :
+  ConcreteTM.tm_accept ConcreteTM.incrementer <> ConcreteTM.tm_reject ConcreteTM.incrementer.
+Proof.
+  simpl. discriminate.
+Qed.
+
+Definition loop_machine_transition : ConcreteTM.Transition :=
+  fun q a => Some (0, a, Stay).
+
+Definition loop_machine : ConcreteTM.TuringMachine :=
+  ConcreteTM.mkTM
+    [0]
+    [0; 1; 2]
+    loop_machine_transition
+    0
+    1
+    2.
+
+Lemma loop_machine_never_halts :
+  forall n c0 c,
+    ConcreteTM.cfg_state c0 = 0 ->
+    ConcreteTM.steps loop_machine n c0 = Some c ->
+    ConcreteTM.cfg_state c = 0.
+Proof.
+  induction n; intros c0 c Hst0 Hsteps.
+  - simpl in Hsteps. injection Hsteps as <-. exact Hst0.
+  - simpl in Hsteps. rewrite Hst0 in Hsteps.
+    destruct (ConcreteTM.State_eq_dec 0 1); try discriminate.
+    destruct (ConcreteTM.State_eq_dec 0 2); try discriminate.
+    simpl in Hsteps.
+    refine (IHn {| ConcreteTM.cfg_state := 0;
+                   ConcreteTM.cfg_tape := ConcreteTM.tape_write (ConcreteTM.cfg_tape c0) (ConcreteTM.cfg_pos c0)
+                                           (ConcreteTM.tape_read (ConcreteTM.cfg_tape c0) (ConcreteTM.cfg_pos c0));
+                   ConcreteTM.cfg_pos := ConcreteTM.cfg_pos c0 |} c _ Hsteps); reflexivity.
+Qed.
+
+Theorem halting_problem_undecidable : ~halting_decidable.
 Admitted.
 
 End Undecidability.
