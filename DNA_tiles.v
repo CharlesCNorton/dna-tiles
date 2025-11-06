@@ -3452,6 +3452,59 @@ Proof.
     lia.
 Qed.
 
+(** ** Cellular Automata *)
+
+Record CellularAutomaton (S : Type) : Type := mkCA {
+  ca_radius : nat;
+  ca_transition : list S -> S
+}.
+
+Definition ca_config (S : Type) := Z -> S.
+
+Definition get_neighborhood {S : Type} (radius : nat) (config : ca_config S) (pos : Z) : list S :=
+  map (fun offset => config (pos + Z.of_nat offset - Z.of_nat radius)%Z)
+      (seq 0 (2 * radius + 1)).
+
+Definition ca_step {S : Type} (ca : CellularAutomaton S) (config : ca_config S) : ca_config S :=
+  fun pos => ca_transition S ca (get_neighborhood (ca_radius S ca) config pos).
+
+Fixpoint ca_steps {S : Type} (ca : CellularAutomaton S) (n : nat) (config : ca_config S) : ca_config S :=
+  match n with
+  | 0 => config
+  | S n' => ca_steps ca n' (ca_step ca config)
+  end.
+
+Definition radius1_ca {S : Type} (default : S) (transition : S -> S -> S -> S) : CellularAutomaton S :=
+  mkCA S 1 (fun neighborhood =>
+    match neighborhood with
+    | [s_left; s_center; s_right] => transition s_left s_center s_right
+    | _ => default
+    end).
+
+Definition ca_tile_encoding {S : Type} (encode_state : S -> nat)
+  (left center right result : S) : TileType :=
+  mkTile (encode_state left) (encode_state center) (encode_state result) (encode_state right).
+
+Definition radius1_ca_to_tileset {S : Type} (transition : S -> S -> S -> S)
+  (states : list S) (encode_state : S -> nat) : TileSet :=
+  flat_map (fun left =>
+    flat_map (fun center =>
+      flat_map (fun right =>
+        [ca_tile_encoding encode_state left center right (transition left center right)])
+      states)
+    states)
+  states.
+
+Theorem radius1_ca_tileset_at_temp_2 :
+  forall {S : Type} (transition : S -> S -> S -> S) (states : list S) (encode : S -> nat),
+    let tas := mkTAS (radius1_ca_to_tileset transition states encode)
+                     (fun g => if Nat.eqb g 0 then 0 else 1)
+                     empty_assembly 2 in
+    tas_temp tas = 2.
+Proof.
+  intros. simpl. reflexivity.
+Qed.
+
 (** ** Rule 110: Universal Elementary Cellular Automaton *)
 
 (** Rule 110 state: bit value *)
@@ -3469,6 +3522,22 @@ Definition rule110 (left current right : bool) : bool :=
   | false, false, true => true
   | false, false, false => false
   end.
+
+Definition rule110_ca : CellularAutomaton bool :=
+  radius1_ca false rule110.
+
+Theorem rule110_is_radius1_ca :
+  ca_radius bool rule110_ca = 1.
+Proof.
+  unfold rule110_ca, radius1_ca. simpl. reflexivity.
+Qed.
+
+Theorem rule110_transition_correct :
+  forall left current right,
+    ca_transition bool rule110_ca [left; current; right] = rule110 left current right.
+Proof.
+  intros. unfold rule110_ca, radius1_ca. simpl. reflexivity.
+Qed.
 
 (** Rule 110 tile encoding *)
 Inductive Rule110Glue : Type :=
