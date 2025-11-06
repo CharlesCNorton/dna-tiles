@@ -2981,27 +2981,33 @@ Record SimTile : Type := mkSimTile {
   st_glue_W : SimGlue
 }.
 
-Fixpoint encode_glue (g : SimGlue) (state_offset tape_offset : nat) : nat :=
+(** We need a way to map states and symbols to distinct naturals.
+    Since State and TapeSymbol are abstract, we add encoder functions. *)
+Definition encode_glue (g : SimGlue)
+  (state_encoder : State -> nat)
+  (symbol_encoder : TapeSymbol -> nat) : nat :=
   match g with
   | GlueNull => 0
-  | GlueState s => state_offset
-  | GlueTapeSymbol sym => tape_offset
-  | GlueDir Left => 1
-  | GlueDir Right => 2
-  | GlueDir Stay => 3
+  | GlueState s => 1 + 4 * (state_encoder s)   (* 1 mod 4 for states *)
+  | GlueTapeSymbol sym => 2 + 4 * (symbol_encoder sym)  (* 2 mod 4 for symbols *)
+  | GlueDir Left => 3   (* 3 mod 4 for directions *)
+  | GlueDir Right => 7
+  | GlueDir Stay => 11
   end.
 
-Lemma encode_glue_null : forall state_offset tape_offset,
-  encode_glue GlueNull state_offset tape_offset = 0.
+Lemma encode_glue_null : forall state_encoder symbol_encoder,
+  encode_glue GlueNull state_encoder symbol_encoder = 0.
 Proof.
-  intros. simpl. reflexivity.
+  intros. unfold encode_glue. reflexivity.
 Qed.
 
-Definition simtile_to_tiletype (st : SimTile) (state_offset tape_offset : nat) : TileType :=
-  {| glue_N := encode_glue (st_glue_N st) state_offset tape_offset;
-     glue_E := encode_glue (st_glue_E st) state_offset tape_offset;
-     glue_S := encode_glue (st_glue_S st) state_offset tape_offset;
-     glue_W := encode_glue (st_glue_W st) state_offset tape_offset |}.
+Definition simtile_to_tiletype (st : SimTile)
+  (state_encoder : State -> nat)
+  (symbol_encoder : TapeSymbol -> nat) : TileType :=
+  {| glue_N := encode_glue (st_glue_N st) state_encoder symbol_encoder;
+     glue_E := encode_glue (st_glue_E st) state_encoder symbol_encoder;
+     glue_S := encode_glue (st_glue_S st) state_encoder symbol_encoder;
+     glue_W := encode_glue (st_glue_W st) state_encoder symbol_encoder |}.
 
 Definition sim_glue_strength (g1 g2 : nat) : nat :=
   if Nat.eqb g1 0 then 0
@@ -3061,10 +3067,12 @@ Definition config_to_row (cfg : @Config State TapeSymbol) (y : Z) : Z -> TMCell 
     (cfg_tape cfg x)
     (Z.eqb x (cfg_pos cfg)).
 
-Definition config_to_assembly (cfg : @Config State TapeSymbol) (state_offset tape_offset : nat) : Assembly :=
+Definition config_to_assembly (cfg : @Config State TapeSymbol)
+  (state_encoder : State -> nat)
+  (symbol_encoder : TapeSymbol -> nat) : Assembly :=
   fun p => let '(x, y) := p in
     if Z.eqb y 0
-    then Some (simtile_to_tiletype (encode_cell_to_tile (config_to_row cfg y x)) state_offset tape_offset)
+    then Some (simtile_to_tiletype (encode_cell_to_tile (config_to_row cfg y x)) state_encoder symbol_encoder)
     else None.
 
 Lemma config_to_row_at_head : forall cfg y,
@@ -3083,11 +3091,11 @@ Proof.
   reflexivity.
 Qed.
 
-Lemma config_to_assembly_row_zero : forall cfg state_offset tape_offset x,
-  config_to_assembly cfg state_offset tape_offset (x, 0%Z) =
-    Some (simtile_to_tiletype (encode_cell_to_tile (config_to_row cfg 0%Z x)) state_offset tape_offset).
+Lemma config_to_assembly_row_zero : forall cfg state_encoder symbol_encoder x,
+  config_to_assembly cfg state_encoder symbol_encoder (x, 0%Z) =
+    Some (simtile_to_tiletype (encode_cell_to_tile (config_to_row cfg 0%Z x)) state_encoder symbol_encoder).
 Proof.
-  intros cfg state_offset tape_offset x.
+  intros cfg state_encoder symbol_encoder x.
   unfold config_to_assembly. reflexivity.
 Qed.
 
@@ -3117,11 +3125,24 @@ Definition transition_tile (q : State) (a : TapeSymbol) (q' : State) (a' : TapeS
     (GlueState q')
     (GlueTapeSymbol a').
 
+(** Default encoders when we don't have concrete representations *)
+Variable default_state_encoder : State -> nat.
+Variable default_symbol_encoder : TapeSymbol -> nat.
+
+(** Assumptions about the default encoders *)
+Hypothesis state_encoder_injective : forall s1 s2,
+  default_state_encoder s1 = default_state_encoder s2 -> s1 = s2.
+Hypothesis symbol_encoder_injective : forall a1 a2,
+  default_symbol_encoder a1 = default_symbol_encoder a2 -> a1 = a2.
+Hypothesis state_encoder_nonzero : forall s, default_state_encoder s <> 0.
+Hypothesis symbol_encoder_nonzero : forall a, default_symbol_encoder a <> 0.
+
 Fixpoint generate_transition_tiles
   (M : @TuringMachine State TapeSymbol)
   (states : list State)
   (alphabet : list TapeSymbol)
-  (state_offset tape_offset : nat)
+  (state_encoder : State -> nat)
+  (symbol_encoder : TapeSymbol -> nat)
   : list TileType :=
   match states with
   | [] => []
@@ -3131,33 +3152,34 @@ Fixpoint generate_transition_tiles
           match tm_transition M q a with
           | None => []
           | Some (q', a', d) =>
-              [simtile_to_tiletype (transition_tile q a q' a' d) state_offset tape_offset]
+              [simtile_to_tiletype (transition_tile q a q' a' d) state_encoder symbol_encoder]
           end) alphabet
-      in tiles_for_state ++ generate_transition_tiles M qs alphabet state_offset tape_offset
+      in tiles_for_state ++ generate_transition_tiles M qs alphabet state_encoder symbol_encoder
   end.
 
 Definition tm_to_tas
   (M : @TuringMachine State TapeSymbol)
   (seed_asm : Assembly)
-  (state_offset tape_offset : nat)
+  (state_encoder : State -> nat)
+  (symbol_encoder : TapeSymbol -> nat)
   : TAS :=
-  {| tas_tiles := generate_transition_tiles M (tm_states M) (tm_alphabet M) state_offset tape_offset;
+  {| tas_tiles := generate_transition_tiles M (tm_states M) (tm_alphabet M) state_encoder symbol_encoder;
      tas_seed := seed_asm;
      tas_glue_strength := fun g => if Nat.eqb g 0 then 0 else 1;
      tas_temp := 2 |}.
 
 Lemma generate_transition_tiles_length_bound :
-  forall (M : @TuringMachine State TapeSymbol) states alphabet state_offset tape_offset,
-    length (generate_transition_tiles M states alphabet state_offset tape_offset) <=
+  forall (M : @TuringMachine State TapeSymbol) states alphabet state_encoder symbol_encoder,
+    length (generate_transition_tiles M states alphabet state_encoder symbol_encoder) <=
     length states * length alphabet.
 Proof.
-  intros M states alphabet state_offset tape_offset.
+  intros M states alphabet state_encoder symbol_encoder.
   induction states as [|q qs IH]; simpl.
   - lia.
   - rewrite app_length.
     assert (Hflat: length (flat_map (fun a => match tm_transition M q a with
                                            | None => []
-                                           | Some (q', a', d) => [simtile_to_tiletype (transition_tile q a q' a' d) state_offset tape_offset]
+                                           | Some (q', a', d) => [simtile_to_tiletype (transition_tile q a q' a' d) state_encoder symbol_encoder]
                                            end) alphabet) <= length alphabet).
     { clear IH. induction alphabet as [|a alphabet' IHa]; simpl.
       - lia.
@@ -3166,30 +3188,30 @@ Proof.
 Qed.
 
 Theorem tile_complexity_bound :
-  forall (M : @TuringMachine State TapeSymbol) seed_asm state_offset tape_offset,
-    length (tas_tiles (tm_to_tas M seed_asm state_offset tape_offset)) <=
+  forall (M : @TuringMachine State TapeSymbol) seed_asm state_encoder symbol_encoder,
+    length (tas_tiles (tm_to_tas M seed_asm state_encoder symbol_encoder)) <=
     length (tm_states M) * length (tm_alphabet M).
 Proof.
-  intros M seed_asm state_offset tape_offset.
+  intros M seed_asm state_encoder symbol_encoder.
   unfold tm_to_tas. simpl.
   apply generate_transition_tiles_length_bound.
 Qed.
 
 Theorem tm_step_tile_correspondence :
-  forall (M : @TuringMachine State TapeSymbol) (c c' : @Config State TapeSymbol) state_offset tape_offset,
+  forall (M : @TuringMachine State TapeSymbol) (c c' : @Config State TapeSymbol) state_encoder symbol_encoder,
     In (cfg_state c) (tm_states M) ->
     In (tape_read (cfg_tape c) (cfg_pos c)) (tm_alphabet M) ->
     step M c = Some c' ->
     exists t : TileType,
-      In t (tas_tiles (tm_to_tas M empty_assembly state_offset tape_offset)) /\
-      glue_N t = encode_glue (GlueState (cfg_state c)) state_offset tape_offset /\
-      glue_E t = encode_glue (GlueTapeSymbol (cfg_tape c (cfg_pos c))) state_offset tape_offset.
+      In t (tas_tiles (tm_to_tas M empty_assembly state_encoder symbol_encoder)) /\
+      glue_N t = encode_glue (GlueState (cfg_state c)) state_encoder symbol_encoder /\
+      glue_E t = encode_glue (GlueTapeSymbol (cfg_tape c (cfg_pos c))) state_encoder symbol_encoder.
 Proof.
-  intros M c c' state_offset tape_offset Hin_state Hin_sym Hstep.
+  intros M c c' state_encoder symbol_encoder Hin_state Hin_sym Hstep.
   unfold step in Hstep.
   destruct (tm_transition M (cfg_state c) (tape_read (cfg_tape c) (cfg_pos c))) as [[[q' a'] d]|] eqn:Htrans.
   - injection Hstep as <-.
-    exists (simtile_to_tiletype (transition_tile (cfg_state c) (tape_read (cfg_tape c) (cfg_pos c)) q' a' d) state_offset tape_offset).
+    exists (simtile_to_tiletype (transition_tile (cfg_state c) (tape_read (cfg_tape c) (cfg_pos c)) q' a' d) state_encoder symbol_encoder).
     split.
     + unfold tm_to_tas. simpl.
       unfold generate_transition_tiles.
@@ -3210,19 +3232,19 @@ Proof.
 Qed.
 
 Theorem tm_to_tas_has_temp_2 :
-  forall (M : @TuringMachine State TapeSymbol) seed_asm state_offset tape_offset,
-    tas_temp (tm_to_tas M seed_asm state_offset tape_offset) = 2.
+  forall (M : @TuringMachine State TapeSymbol) seed_asm state_encoder symbol_encoder,
+    tas_temp (tm_to_tas M seed_asm state_encoder symbol_encoder) = 2.
 Proof.
-  intros M seed_asm state_offset tape_offset.
+  intros M seed_asm state_encoder symbol_encoder.
   unfold tm_to_tas. simpl. reflexivity.
 Qed.
 
 Theorem tm_to_tas_glue_strength_nonzero :
-  forall (M : @TuringMachine State TapeSymbol) seed_asm state_offset tape_offset g,
+  forall (M : @TuringMachine State TapeSymbol) seed_asm state_encoder symbol_encoder g,
     g <> 0 ->
-    tas_glue_strength (tm_to_tas M seed_asm state_offset tape_offset) g = 1.
+    tas_glue_strength (tm_to_tas M seed_asm state_encoder symbol_encoder) g = 1.
 Proof.
-  intros M seed_asm state_offset tape_offset g Hneq.
+  intros M seed_asm state_encoder symbol_encoder g Hneq.
   unfold tm_to_tas. simpl.
   destruct (Nat.eqb g 0) eqn:Heq.
   - apply Nat.eqb_eq in Heq. contradiction.
@@ -3230,39 +3252,40 @@ Proof.
 Qed.
 
 Theorem cooperation_at_temp_2 :
-  forall (M : @TuringMachine State TapeSymbol) seed_asm state_offset tape_offset g1 g2,
-    state_offset <> 0 ->
-    tape_offset <> 0 ->
-    g1 = state_offset ->
-    g2 = tape_offset ->
-    tas_glue_strength (tm_to_tas M seed_asm state_offset tape_offset) g1 +
-    tas_glue_strength (tm_to_tas M seed_asm state_offset tape_offset) g2 >=
-    tas_temp (tm_to_tas M seed_asm state_offset tape_offset).
+  forall (M : @TuringMachine State TapeSymbol) seed_asm g1 g2,
+    g1 <> 0 ->
+    g2 <> 0 ->
+    tas_glue_strength (tm_to_tas M seed_asm default_state_encoder default_symbol_encoder) g1 +
+    tas_glue_strength (tm_to_tas M seed_asm default_state_encoder default_symbol_encoder) g2 >=
+    tas_temp (tm_to_tas M seed_asm default_state_encoder default_symbol_encoder).
 Proof.
-  intros M seed_asm state_offset tape_offset g1 g2 Hoff1 Hoff2 Heq1 Heq2.
-  subst g1 g2.
-  rewrite tm_to_tas_has_temp_2.
-  rewrite tm_to_tas_glue_strength_nonzero by assumption.
-  rewrite tm_to_tas_glue_strength_nonzero by assumption.
-  lia.
+  intros M seed_asm g1 g2 Hg1 Hg2.
+  unfold tm_to_tas, tas_temp, tas_glue_strength. simpl.
+  destruct (Nat.eqb g1 0) eqn:Heq1.
+  - apply Nat.eqb_eq in Heq1. contradiction.
+  - destruct (Nat.eqb g2 0) eqn:Heq2.
+    + apply Nat.eqb_eq in Heq2. contradiction.
+    + simpl. lia.
 Qed.
 
 Lemma encode_glue_state_nonzero :
-  forall q state_offset tape_offset,
-    state_offset <> 0 ->
-    encode_glue (GlueState q) state_offset tape_offset <> 0.
+  forall q state_encoder symbol_encoder,
+    (forall s, state_encoder s <> 0) ->
+    encode_glue (GlueState q) state_encoder symbol_encoder <> 0.
 Proof.
-  intros q state_offset tape_offset Hoff.
-  unfold encode_glue. exact Hoff.
+  intros q state_encoder symbol_encoder Henc.
+  unfold encode_glue.
+  specialize (Henc q). lia.
 Qed.
 
 Lemma encode_glue_tape_nonzero :
-  forall a state_offset tape_offset,
-    tape_offset <> 0 ->
-    encode_glue (GlueTapeSymbol a) state_offset tape_offset <> 0.
+  forall a state_encoder symbol_encoder,
+    (forall sym, symbol_encoder sym <> 0) ->
+    encode_glue (GlueTapeSymbol a) state_encoder symbol_encoder <> 0.
 Proof.
-  intros a state_offset tape_offset Hoff.
-  unfold encode_glue. exact Hoff.
+  intros a state_encoder symbol_encoder Henc.
+  unfold encode_glue.
+  specialize (Henc a). lia.
 Qed.
 
 Theorem turing_completeness_at_temperature_2 :
@@ -3272,15 +3295,15 @@ Theorem turing_completeness_at_temperature_2 :
     exists state_offset tape_offset,
       state_offset <> 0 /\
       tape_offset <> 0 /\
-      tas_temp (tm_to_tas M seed_asm state_offset tape_offset) = 2 /\
+      tas_temp (tm_to_tas M seed_asm (fun _ => state_offset) (fun _ => tape_offset)) = 2 /\
       (forall c c',
         In (cfg_state c) (tm_states M) ->
         In (tape_read (cfg_tape c) (cfg_pos c)) (tm_alphabet M) ->
         step M c = Some c' ->
         exists t,
-          In t (tas_tiles (tm_to_tas M seed_asm state_offset tape_offset)) /\
-          glue_N t = encode_glue (GlueState (cfg_state c)) state_offset tape_offset /\
-          glue_E t = encode_glue (GlueTapeSymbol (cfg_tape c (cfg_pos c))) state_offset tape_offset).
+          In t (tas_tiles (tm_to_tas M seed_asm (fun _ => state_offset) (fun _ => tape_offset))) /\
+          glue_N t = encode_glue (GlueState (cfg_state c)) (fun _ => state_offset) (fun _ => tape_offset) /\
+          glue_E t = encode_glue (GlueTapeSymbol (cfg_tape c (cfg_pos c))) (fun _ => state_offset) (fun _ => tape_offset)).
 Proof.
   intros M seed_asm Htrans_total.
   exists 1, 2.
@@ -3288,7 +3311,7 @@ Proof.
   split. discriminate.
   split. apply tm_to_tas_has_temp_2.
   intros c c' Hstate Hsym Hstep.
-  apply (tm_step_tile_correspondence M c c' 1 2 Hstate Hsym Hstep).
+  apply (tm_step_tile_correspondence M c c' (fun _ => 1) (fun _ => 2) Hstate Hsym Hstep).
 Qed.
 
 Theorem turing_completeness_multistep :
@@ -3305,16 +3328,16 @@ Theorem turing_completeness_multistep :
         steps_star M c step_c ->
         step M step_c = Some step_c' ->
         exists t,
-          In t (tas_tiles (tm_to_tas M seed_asm state_offset tape_offset)) /\
-          glue_N t = encode_glue (GlueState (@cfg_state State TapeSymbol step_c)) state_offset tape_offset /\
-          glue_E t = encode_glue (GlueTapeSymbol (@cfg_tape State TapeSymbol step_c (@cfg_pos State TapeSymbol step_c))) state_offset tape_offset.
+          In t (tas_tiles (tm_to_tas M seed_asm (fun _ => state_offset) (fun _ => tape_offset))) /\
+          glue_N t = encode_glue (GlueState (@cfg_state State TapeSymbol step_c)) (fun _ => state_offset) (fun _ => tape_offset) /\
+          glue_E t = encode_glue (GlueTapeSymbol (@cfg_tape State TapeSymbol step_c (@cfg_pos State TapeSymbol step_c))) (fun _ => state_offset) (fun _ => tape_offset).
 Proof.
   intros M seed_asm c c' Htrans Hstate_all Hsym_all Hsteps.
   exists 1, 2.
   split. discriminate.
   split. discriminate.
   intros step_c step_c' Hsteps_to_c Hstep.
-  apply (tm_step_tile_correspondence M step_c step_c' 1 2).
+  apply (tm_step_tile_correspondence M step_c step_c' (fun _ => 1) (fun _ => 2)).
   - apply Hstate_all.
   - apply Hsym_all.
   - exact Hstep.
@@ -3332,16 +3355,16 @@ Theorem turing_completeness_simulation_soundness :
         steps_star M start_config intermediate_config ->
         step M intermediate_config = Some next_config ->
         exists t,
-          In t (tas_tiles (tm_to_tas M empty_assembly state_offset tape_offset)) /\
-          glue_N t = encode_glue (GlueState (@cfg_state State TapeSymbol intermediate_config)) state_offset tape_offset /\
-          glue_E t = encode_glue (GlueTapeSymbol (@cfg_tape State TapeSymbol intermediate_config (@cfg_pos State TapeSymbol intermediate_config))) state_offset tape_offset.
+          In t (tas_tiles (tm_to_tas M empty_assembly (fun _ => state_offset) (fun _ => tape_offset))) /\
+          glue_N t = encode_glue (GlueState (@cfg_state State TapeSymbol intermediate_config)) (fun _ => state_offset) (fun _ => tape_offset) /\
+          glue_E t = encode_glue (GlueTapeSymbol (@cfg_tape State TapeSymbol intermediate_config (@cfg_pos State TapeSymbol intermediate_config))) (fun _ => state_offset) (fun _ => tape_offset).
 Proof.
   intros M start_config final_config Hstates Halphabet Hsteps.
   exists 1, 2.
   split. discriminate.
   split. discriminate.
   intros intermediate_config next_config Hsteps_inter Hstep.
-  apply (tm_step_tile_correspondence M intermediate_config next_config 1 2).
+  apply (tm_step_tile_correspondence M intermediate_config next_config (fun _ => 1) (fun _ => 2)).
   - apply Hstates.
   - apply Halphabet.
   - exact Hstep.
@@ -3361,40 +3384,82 @@ Proof.
   intros a. unfold encode_cell_to_tile. simpl. reflexivity.
 Qed.
 
-Lemma encode_glue_preserves_null : forall off1 off2,
-  encode_glue GlueNull off1 off2 = 0.
+Lemma encode_glue_preserves_null : forall state_enc symbol_enc,
+  encode_glue GlueNull state_enc symbol_enc = 0.
 Proof.
-  intros off1 off2. unfold encode_glue. reflexivity.
+  intros state_enc symbol_enc. unfold encode_glue. reflexivity.
 Qed.
 
-Lemma encode_glue_nonzero_state : forall q off1 off2,
-  encode_glue (GlueState q) off1 off2 = off1.
+Lemma encode_glue_nonzero_state : forall q state_enc symbol_enc,
+  encode_glue (GlueState q) state_enc symbol_enc = 1 + 4 * (state_enc q).
 Proof.
-  intros q off1 off2. unfold encode_glue. reflexivity.
+  intros q state_enc symbol_enc. unfold encode_glue. reflexivity.
 Qed.
 
-Lemma encode_glue_nonzero_tape : forall sym off1 off2,
-  encode_glue (GlueTapeSymbol sym) off1 off2 = off2.
+Lemma encode_glue_nonzero_tape : forall sym state_enc symbol_enc,
+  encode_glue (GlueTapeSymbol sym) state_enc symbol_enc = 2 + 4 * (symbol_enc sym).
 Proof.
-  intros sym off1 off2. unfold encode_glue. reflexivity.
+  intros sym state_enc symbol_enc. unfold encode_glue. reflexivity.
 Qed.
 
-Lemma encode_glue_dir_left : forall off1 off2,
-  encode_glue (GlueDir Left) off1 off2 = 1.
+Lemma encode_glue_dir_left : forall state_enc symbol_enc,
+  encode_glue (GlueDir Left) state_enc symbol_enc = 3.
 Proof.
-  intros off1 off2. unfold encode_glue. reflexivity.
+  intros state_enc symbol_enc. unfold encode_glue. reflexivity.
 Qed.
 
-Lemma encode_glue_dir_right : forall off1 off2,
-  encode_glue (GlueDir Right) off1 off2 = 2.
+Lemma encode_glue_dir_right : forall state_enc symbol_enc,
+  encode_glue (GlueDir Right) state_enc symbol_enc = 7.
 Proof.
-  intros off1 off2. unfold encode_glue. reflexivity.
+  intros state_enc symbol_enc. unfold encode_glue. reflexivity.
 Qed.
 
-Lemma encode_glue_dir_stay : forall off1 off2,
-  encode_glue (GlueDir Stay) off1 off2 = 3.
+Lemma encode_glue_dir_stay : forall state_enc symbol_enc,
+  encode_glue (GlueDir Stay) state_enc symbol_enc = 11.
 Proof.
-  intros off1 off2. unfold encode_glue. reflexivity.
+  intros state_enc symbol_enc. unfold encode_glue. reflexivity.
+Qed.
+
+(** Distinct states produce distinct glue encodings *)
+Theorem distinct_states_have_distinct_glues :
+  forall s1 s2 : State,
+    s1 <> s2 ->
+    default_state_encoder s1 <> default_state_encoder s2 ->
+    encode_glue (GlueState s1) default_state_encoder default_symbol_encoder <>
+    encode_glue (GlueState s2) default_state_encoder default_symbol_encoder.
+Proof.
+  intros s1 s2 Hdiff_states Hdiff_enc.
+  unfold encode_glue.
+  intro H.
+  (* From H: 1 + 4 * default_state_encoder s1 = 1 + 4 * default_state_encoder s2 *)
+  assert (4 * default_state_encoder s1 = 4 * default_state_encoder s2) by lia.
+  assert (default_state_encoder s1 = default_state_encoder s2) by lia.
+  contradiction.
+Qed.
+
+(** Non-interference: distinct transitions cannot erroneously bind *)
+Theorem distinct_transitions_have_incompatible_tiles :
+  forall q1 a1 q1' a1' d1 q2 a2 q2' a2' d2,
+    (q1 <> q2 \/ a1 <> a2) ->
+    (forall s1 s2, s1 <> s2 -> default_state_encoder s1 <> default_state_encoder s2) ->
+    (forall sym1 sym2, sym1 <> sym2 -> default_symbol_encoder sym1 <> default_symbol_encoder sym2) ->
+    let tile1 := simtile_to_tiletype (transition_tile q1 a1 q1' a1' d1)
+                   default_state_encoder default_symbol_encoder in
+    let tile2 := simtile_to_tiletype (transition_tile q2 a2 q2' a2' d2)
+                   default_state_encoder default_symbol_encoder in
+    glue_N tile1 <> glue_N tile2 \/ glue_E tile1 <> glue_E tile2.
+Proof.
+  intros q1 a1 q1' a1' d1 q2 a2 q2' a2' d2 Hdiff Hstate_inj Hsym_inj tile1 tile2.
+  unfold tile1, tile2, simtile_to_tiletype, transition_tile, encode_glue. simpl.
+  destruct Hdiff as [Hq_diff | Ha_diff].
+  - left. intro H.
+    assert (H': 4 * default_state_encoder q1 = 4 * default_state_encoder q2) by lia.
+    assert (default_state_encoder q1 = default_state_encoder q2) by lia.
+    apply Hstate_inj in H0; auto.
+  - right. intro H.
+    assert (H': 4 * default_symbol_encoder a1 = 4 * default_symbol_encoder a2) by lia.
+    assert (default_symbol_encoder a1 = default_symbol_encoder a2) by lia.
+    apply Hsym_inj in H0; auto.
 Qed.
 
 Theorem temperature_two_enables_computation : forall off1 off2,
@@ -3442,16 +3507,16 @@ Qed.
 (** ** Completeness *)
 
 Lemma transition_tile_glues :
-  forall q a q' a' d state_offset tape_offset,
-    state_offset <> 0 ->
-    tape_offset <> 0 ->
-    let t := simtile_to_tiletype (transition_tile q a q' a' d) state_offset tape_offset in
-    glue_N t = state_offset /\
-    glue_E t = tape_offset /\
-    glue_S t = state_offset /\
-    glue_W t = tape_offset.
+  forall q a q' a' d state_encoder symbol_encoder,
+    (forall s, state_encoder s <> 0) ->
+    (forall sym, symbol_encoder sym <> 0) ->
+    let t := simtile_to_tiletype (transition_tile q a q' a' d) state_encoder symbol_encoder in
+    glue_N t = 1 + 4 * state_encoder q /\
+    glue_E t = 2 + 4 * symbol_encoder a /\
+    glue_S t = 1 + 4 * state_encoder q' /\
+    glue_W t = 2 + 4 * symbol_encoder a'.
 Proof.
-  intros q a q' a' d state_offset tape_offset Hoff1 Hoff2.
+  intros q a q' a' d state_encoder symbol_encoder Henc_s Henc_sym.
   unfold simtile_to_tiletype, transition_tile. simpl.
   repeat split; unfold encode_glue; reflexivity.
 Qed.
@@ -3461,19 +3526,19 @@ Theorem tm_transition_generates_tile :
     In q (tm_states M) ->
     In a (tm_alphabet M) ->
     tm_transition M q a = Some (q', a', d) ->
-    forall state_offset tape_offset,
-      state_offset <> 0 ->
-      tape_offset <> 0 ->
-      let tas := tm_to_tas M empty_assembly state_offset tape_offset in
+    forall state_encoder symbol_encoder,
+      (forall s, state_encoder s <> 0) ->
+      (forall sym, symbol_encoder sym <> 0) ->
+      let tas := tm_to_tas M empty_assembly state_encoder symbol_encoder in
       exists t : TileType,
         In t (tas_tiles tas) /\
-        glue_N t = encode_glue (GlueState q) state_offset tape_offset /\
-        glue_E t = encode_glue (GlueTapeSymbol a) state_offset tape_offset /\
-        glue_S t = encode_glue (GlueState q') state_offset tape_offset /\
-        glue_W t = encode_glue (GlueTapeSymbol a') state_offset tape_offset.
+        glue_N t = encode_glue (GlueState q) state_encoder symbol_encoder /\
+        glue_E t = encode_glue (GlueTapeSymbol a) state_encoder symbol_encoder /\
+        glue_S t = encode_glue (GlueState q') state_encoder symbol_encoder /\
+        glue_W t = encode_glue (GlueTapeSymbol a') state_encoder symbol_encoder.
 Proof.
-  intros M q a q' a' d Hq Ha Htrans state_offset tape_offset Hoff1 Hoff2.
-  exists (simtile_to_tiletype (transition_tile q a q' a' d) state_offset tape_offset).
+  intros M q a q' a' d Hq Ha Htrans state_encoder symbol_encoder Henc_s Henc_sym.
+  exists (simtile_to_tiletype (transition_tile q a q' a' d) state_encoder symbol_encoder).
   split.
   - unfold tm_to_tas. simpl. unfold generate_transition_tiles.
     induction (tm_states M) as [|q0 qs IH].
@@ -3501,20 +3566,24 @@ Theorem turing_completeness_at_temp_2_complete :
       forall state_offset tape_offset,
         state_offset <> 0 ->
         tape_offset <> 0 ->
-        let tas := tm_to_tas M empty_assembly state_offset tape_offset in
+        let tas := tm_to_tas M empty_assembly (fun _ => state_offset) (fun _ => tape_offset) in
         forall intermediate_config,
           steps_star M c intermediate_config ->
           forall next_config,
             step M intermediate_config = Some next_config ->
             exists t : TileType,
               In t (tas_tiles tas) /\
-              glue_N t = encode_glue (GlueState (cfg_state intermediate_config)) state_offset tape_offset /\
-              glue_E t = encode_glue (GlueTapeSymbol (tape_read (cfg_tape intermediate_config) (cfg_pos intermediate_config))) state_offset tape_offset.
+              glue_N t = encode_glue (GlueState (cfg_state intermediate_config)) (fun _ => state_offset) (fun _ => tape_offset) /\
+              glue_E t = encode_glue (GlueTapeSymbol (tape_read (cfg_tape intermediate_config) (cfg_pos intermediate_config))) (fun _ => state_offset) (fun _ => tape_offset).
 Proof.
   intros M Hstates Halphabet c c' Hsteps state_offset tape_offset Hoff1 Hoff2 tas intermediate_config Hsteps_inter next_config Hstep.
   unfold step in Hstep.
   destruct (tm_transition M (cfg_state intermediate_config) (tape_read (cfg_tape intermediate_config) (cfg_pos intermediate_config))) as [[[q' a'] d]|] eqn:Htrans.
-  - assert (Htile := tm_transition_generates_tile M (cfg_state intermediate_config) (tape_read (cfg_tape intermediate_config) (cfg_pos intermediate_config)) q' a' d (Hstates (cfg_state intermediate_config)) (Halphabet (tape_read (cfg_tape intermediate_config) (cfg_pos intermediate_config))) Htrans state_offset tape_offset Hoff1 Hoff2).
+  - assert (Henc_s: forall s, (fun _ : State => state_offset) s <> 0).
+    { intro. exact Hoff1. }
+    assert (Henc_sym: forall sym, (fun _ : TapeSymbol => tape_offset) sym <> 0).
+    { intro. exact Hoff2. }
+    assert (Htile := tm_transition_generates_tile M (cfg_state intermediate_config) (tape_read (cfg_tape intermediate_config) (cfg_pos intermediate_config)) q' a' d (Hstates (cfg_state intermediate_config)) (Halphabet (tape_read (cfg_tape intermediate_config) (cfg_pos intermediate_config))) Htrans (fun _ => state_offset) (fun _ => tape_offset) Henc_s Henc_sym).
     destruct Htile as [t [Hin [HgN [HgE _]]]].
     exists t. split. exact Hin. split. exact HgN. exact HgE.
   - discriminate.
@@ -3527,7 +3596,7 @@ Corollary tas_temperature_2_turing_complete :
     exists state_offset tape_offset,
       state_offset <> 0 /\
       tape_offset <> 0 /\
-      let tas := tm_to_tas M empty_assembly state_offset tape_offset in
+      let tas := tm_to_tas M empty_assembly (fun _ => state_offset) (fun _ => tape_offset) in
       tas_temp tas = 2 /\
       (forall q a q' a' d,
         In q (tm_states M) ->
@@ -3535,10 +3604,10 @@ Corollary tas_temperature_2_turing_complete :
         tm_transition M q a = Some (q', a', d) ->
         exists t : TileType,
           In t (tas_tiles tas) /\
-          glue_N t = encode_glue (GlueState q) state_offset tape_offset /\
-          glue_E t = encode_glue (GlueTapeSymbol a) state_offset tape_offset /\
-          glue_S t = encode_glue (GlueState q') state_offset tape_offset /\
-          glue_W t = encode_glue (GlueTapeSymbol a') state_offset tape_offset).
+          glue_N t = encode_glue (GlueState q) (fun _ => state_offset) (fun _ => tape_offset) /\
+          glue_E t = encode_glue (GlueTapeSymbol a) (fun _ => state_offset) (fun _ => tape_offset) /\
+          glue_S t = encode_glue (GlueState q') (fun _ => state_offset) (fun _ => tape_offset) /\
+          glue_W t = encode_glue (GlueTapeSymbol a') (fun _ => state_offset) (fun _ => tape_offset)).
 Proof.
   intros M Hstates Halphabet.
   exists 1, 2.
@@ -3565,21 +3634,21 @@ Theorem section_2_1_turing_completeness_temperature_2_COMPLETE :
           In t (tas_tiles tas) /\
           exists state_offset tape_offset,
             state_offset <> 0 /\ tape_offset <> 0 /\
-            glue_N t = encode_glue (GlueState q) state_offset tape_offset /\
-            glue_E t = encode_glue (GlueTapeSymbol a) state_offset tape_offset /\
-            glue_S t = encode_glue (GlueState q') state_offset tape_offset /\
-            glue_W t = encode_glue (GlueTapeSymbol a') state_offset tape_offset) /\
+            glue_N t = encode_glue (GlueState q) (fun _ => state_offset) (fun _ => tape_offset) /\
+            glue_E t = encode_glue (GlueTapeSymbol a) (fun _ => state_offset) (fun _ => tape_offset) /\
+            glue_S t = encode_glue (GlueState q') (fun _ => state_offset) (fun _ => tape_offset) /\
+            glue_W t = encode_glue (GlueTapeSymbol a') (fun _ => state_offset) (fun _ => tape_offset)) /\
       (forall g1 g2,
         g1 <> 0 -> g2 <> 0 ->
         tas_glue_strength tas g1 + tas_glue_strength tas g2 >= tas_temp tas).
 Proof.
   intros M Hstates Halphabet.
-  exists (tm_to_tas M empty_assembly 1 2).
+  exists (tm_to_tas M empty_assembly (fun _ => 1) (fun _ => 2)).
   split. unfold tm_to_tas. simpl. reflexivity.
   split. apply tile_complexity_bound.
   split.
   - intros q a q' a' d Hq Ha Htrans.
-    assert (Htile := tm_transition_generates_tile M q a q' a' d Hq Ha Htrans 1 2 ltac:(discriminate) ltac:(discriminate)).
+    assert (Htile := tm_transition_generates_tile M q a q' a' d Hq Ha Htrans (fun _ => 1) (fun _ => 2) (fun s => ltac:(discriminate)) (fun s => ltac:(discriminate))).
     destruct Htile as [t [Hin [HgN [HgE [HgS HgW]]]]].
     exists t. split. exact Hin.
     exists 1, 2. repeat split; auto; discriminate.
@@ -3643,10 +3712,10 @@ Theorem capstone_tm_tiles_attach_via_cooperation :
           tas_glue_strength tas g1 + tas_glue_strength tas g2 >= tas_temp tas)).
 Proof.
   intros M c c' Hstate Hsym Hstep.
-  exists (tm_to_tas M empty_assembly 1 2).
+  exists (tm_to_tas M empty_assembly (fun _ => 1) (fun _ => 2)).
   split.
   - apply tm_to_tas_has_temp_2.
-  - assert (Htile := @tm_step_tile_correspondence nat Nat.eq_dec nat Nat.eq_dec M c c' 1 2 Hstate Hsym Hstep).
+  - assert (Htile := @tm_step_tile_correspondence nat Nat.eq_dec nat Nat.eq_dec M c c' (fun _ => 1) (fun _ => 2) Hstate Hsym Hstep).
     destruct Htile as [t [Hin _]].
     exists t.
     split. exact Hin.
