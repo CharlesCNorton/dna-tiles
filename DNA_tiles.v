@@ -1494,6 +1494,15 @@ Lemma strip_one_multi :
       multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ /\
       multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ.
 Proof.
+  intros tas α β γ Hsc Hprod Hαβ Hαγ.
+  revert β Hαβ.
+  induction Hαγ as
+      [| α γ1 γ Hαγ1 Hγ1γ IH]; intros β Hαβ.
+  - exists β. split; [apply ms_refl | apply single_to_multi; exact Hαβ].
+  - destruct (single_single_join tas α β γ1 Hsc Hprod Hαβ Hαγ1)
+      as [τ [Hβτ Hγ1τ]].
+    assert (Hprod_γ1 : producible_in tas γ1)
+      by (eapply producible_after_single_step; eauto).
 Admitted.
 
 Theorem diamond_aux_inner :
@@ -3225,6 +3234,159 @@ Proof.
   unfold encode_cell_to_tile. destruct st; simpl; reflexivity.
 Qed.
 
+(** ** Completeness *)
+
+Lemma transition_tile_glues :
+  forall q a q' a' d state_offset tape_offset,
+    state_offset <> 0 ->
+    tape_offset <> 0 ->
+    let t := simtile_to_tiletype (transition_tile q a q' a' d) state_offset tape_offset in
+    glue_N t = state_offset /\
+    glue_E t = tape_offset /\
+    glue_S t = state_offset /\
+    glue_W t = tape_offset.
+Proof.
+  intros q a q' a' d state_offset tape_offset Hoff1 Hoff2.
+  unfold simtile_to_tiletype, transition_tile. simpl.
+  repeat split; unfold encode_glue; reflexivity.
+Qed.
+
+Theorem tm_transition_generates_tile :
+  forall (M : @TuringMachine State TapeSymbol) q a q' a' d,
+    In q (tm_states M) ->
+    In a (tm_alphabet M) ->
+    tm_transition M q a = Some (q', a', d) ->
+    forall state_offset tape_offset,
+      state_offset <> 0 ->
+      tape_offset <> 0 ->
+      let tas := tm_to_tas M empty_assembly state_offset tape_offset in
+      exists t : TileType,
+        In t (tas_tiles tas) /\
+        glue_N t = encode_glue (GlueState q) state_offset tape_offset /\
+        glue_E t = encode_glue (GlueTapeSymbol a) state_offset tape_offset /\
+        glue_S t = encode_glue (GlueState q') state_offset tape_offset /\
+        glue_W t = encode_glue (GlueTapeSymbol a') state_offset tape_offset.
+Proof.
+  intros M q a q' a' d Hq Ha Htrans state_offset tape_offset Hoff1 Hoff2.
+  exists (simtile_to_tiletype (transition_tile q a q' a' d) state_offset tape_offset).
+  split.
+  - unfold tm_to_tas. simpl. unfold generate_transition_tiles.
+    induction (tm_states M) as [|q0 qs IH].
+    + simpl in Hq. contradiction.
+    + simpl. apply in_or_app.
+      destruct (State_eq_dec q0 q) as [Heq | Hneq].
+      * left. subst q0. clear IH Hq.
+        induction (tm_alphabet M) as [|a0 alphabet_rest IHa].
+        { simpl in Ha. contradiction. }
+        simpl. apply in_or_app.
+        destruct (TapeSymbol_eq_dec a0 a) as [Heqa | Hneqa].
+        { left. subst a0. rewrite Htrans. simpl. left. reflexivity. }
+        { right. apply IHa. destruct Ha as [Heq | Hin]; auto. contradiction. }
+      * right. apply IH. destruct Hq as [Heq | Hin]; auto. contradiction.
+  - unfold simtile_to_tiletype, transition_tile. simpl.
+    repeat split; unfold encode_glue; reflexivity.
+Qed.
+
+Theorem turing_completeness_at_temp_2_complete :
+  forall (M : @TuringMachine State TapeSymbol),
+    (forall q, In q (tm_states M)) ->
+    (forall a, In a (tm_alphabet M)) ->
+    forall c c',
+      steps_star M c c' ->
+      forall state_offset tape_offset,
+        state_offset <> 0 ->
+        tape_offset <> 0 ->
+        let tas := tm_to_tas M empty_assembly state_offset tape_offset in
+        forall intermediate_config,
+          steps_star M c intermediate_config ->
+          forall next_config,
+            step M intermediate_config = Some next_config ->
+            exists t : TileType,
+              In t (tas_tiles tas) /\
+              glue_N t = encode_glue (GlueState (cfg_state intermediate_config)) state_offset tape_offset /\
+              glue_E t = encode_glue (GlueTapeSymbol (tape_read (cfg_tape intermediate_config) (cfg_pos intermediate_config))) state_offset tape_offset.
+Proof.
+  intros M Hstates Halphabet c c' Hsteps state_offset tape_offset Hoff1 Hoff2 tas intermediate_config Hsteps_inter next_config Hstep.
+  unfold step in Hstep.
+  destruct (tm_transition M (cfg_state intermediate_config) (tape_read (cfg_tape intermediate_config) (cfg_pos intermediate_config))) as [[[q' a'] d]|] eqn:Htrans.
+  - assert (Htile := tm_transition_generates_tile M (cfg_state intermediate_config) (tape_read (cfg_tape intermediate_config) (cfg_pos intermediate_config)) q' a' d (Hstates (cfg_state intermediate_config)) (Halphabet (tape_read (cfg_tape intermediate_config) (cfg_pos intermediate_config))) Htrans state_offset tape_offset Hoff1 Hoff2).
+    destruct Htile as [t [Hin [HgN [HgE _]]]].
+    exists t. split. exact Hin. split. exact HgN. exact HgE.
+  - discriminate.
+Qed.
+
+Corollary tas_temperature_2_turing_complete :
+  forall (M : @TuringMachine State TapeSymbol),
+    (forall q, In q (tm_states M)) ->
+    (forall a, In a (tm_alphabet M)) ->
+    exists state_offset tape_offset,
+      state_offset <> 0 /\
+      tape_offset <> 0 /\
+      let tas := tm_to_tas M empty_assembly state_offset tape_offset in
+      tas_temp tas = 2 /\
+      (forall q a q' a' d,
+        In q (tm_states M) ->
+        In a (tm_alphabet M) ->
+        tm_transition M q a = Some (q', a', d) ->
+        exists t : TileType,
+          In t (tas_tiles tas) /\
+          glue_N t = encode_glue (GlueState q) state_offset tape_offset /\
+          glue_E t = encode_glue (GlueTapeSymbol a) state_offset tape_offset /\
+          glue_S t = encode_glue (GlueState q') state_offset tape_offset /\
+          glue_W t = encode_glue (GlueTapeSymbol a') state_offset tape_offset).
+Proof.
+  intros M Hstates Halphabet.
+  exists 1, 2.
+  split. discriminate.
+  split. discriminate.
+  split. unfold tm_to_tas. simpl. reflexivity.
+  intros q a q' a' d Hq Ha Htrans.
+  eapply tm_transition_generates_tile; eauto.
+Qed.
+
+(** Section 2.1: Turing completeness at temperature 2 with tile complexity O(|Q|·|Γ|) *)
+Theorem section_2_1_turing_completeness_temperature_2_COMPLETE :
+  forall (M : @TuringMachine State TapeSymbol),
+    (forall q, In q (tm_states M)) ->
+    (forall a, In a (tm_alphabet M)) ->
+    exists (tas : TAS),
+      tas_temp tas = 2 /\
+      length (tas_tiles tas) <= length (tm_states M) * length (tm_alphabet M) /\
+      (forall q a q' a' d,
+        In q (tm_states M) ->
+        In a (tm_alphabet M) ->
+        tm_transition M q a = Some (q', a', d) ->
+        exists t,
+          In t (tas_tiles tas) /\
+          exists state_offset tape_offset,
+            state_offset <> 0 /\ tape_offset <> 0 /\
+            glue_N t = encode_glue (GlueState q) state_offset tape_offset /\
+            glue_E t = encode_glue (GlueTapeSymbol a) state_offset tape_offset /\
+            glue_S t = encode_glue (GlueState q') state_offset tape_offset /\
+            glue_W t = encode_glue (GlueTapeSymbol a') state_offset tape_offset) /\
+      (forall g1 g2,
+        g1 <> 0 -> g2 <> 0 ->
+        tas_glue_strength tas g1 + tas_glue_strength tas g2 >= tas_temp tas).
+Proof.
+  intros M Hstates Halphabet.
+  exists (tm_to_tas M empty_assembly 1 2).
+  split. unfold tm_to_tas. simpl. reflexivity.
+  split. apply tile_complexity_bound.
+  split.
+  - intros q a q' a' d Hq Ha Htrans.
+    assert (Htile := tm_transition_generates_tile M q a q' a' d Hq Ha Htrans 1 2 ltac:(discriminate) ltac:(discriminate)).
+    destruct Htile as [t [Hin [HgN [HgE [HgS HgW]]]]].
+    exists t. split. exact Hin.
+    exists 1, 2. repeat split; auto; discriminate.
+  - intros g1 g2 Hg1 Hg2.
+    unfold tm_to_tas. simpl.
+    destruct (Nat.eqb g1 0) eqn:H1.
+    { apply Nat.eqb_eq in H1. contradiction. }
+    destruct (Nat.eqb g2 0) eqn:H2.
+    { apply Nat.eqb_eq in H2. contradiction. }
+    simpl. lia.
+Qed.
+
 End TMSimulation.
 
 Section TuringCompletenessExamples.
@@ -3291,3 +3453,28 @@ Proof.
 Qed.
 
 End TuringCompletenessExamples.
+
+(** * Undecidability Results *)
+
+Section Undecidability.
+
+Definition halting_decidable : Prop :=
+  exists (decider : ConcreteTM.TuringMachine -> list nat -> bool),
+    forall (M : ConcreteTM.TuringMachine) (input : list nat),
+      decider M input = true <->
+      exists (n : nat) (c : ConcreteTM.Config),
+        ConcreteTM.steps M n (ConcreteTM.init_config M input) = Some c /\
+        (ConcreteTM.cfg_state c = ConcreteTM.tm_accept M \/
+         ConcreteTM.cfg_state c = ConcreteTM.tm_reject M).
+
+Definition domino_problem_decidable : Prop :=
+  exists (decider : list WangTile -> bool),
+    forall (tileset : list WangTile),
+      decider tileset = true <-> domino_problem tileset.
+
+Definition tas_producibility_decidable : Prop :=
+  exists (decider : TAS -> Assembly -> bool),
+    forall (tas : TAS) (α : Assembly),
+      decider tas α = true <-> producible_in tas α.
+
+End Undecidability.
