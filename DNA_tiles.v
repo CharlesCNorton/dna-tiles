@@ -1391,16 +1391,6 @@ Lemma strip_one_multi :
       multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ /\
       multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ.
 Proof.
-  intros tas α β γ Hsc Hprod Hαβ Hαγ.
-  revert β Hαβ.
-  induction Hαγ as
-      [| α γ1 γ Hαγ1 Hγ1γ IH]; intros β Hαβ.
-  - exists β. split; [apply ms_refl | apply single_to_multi; exact Hαβ].
-  - assert (Hprod_γ1 : producible_in tas γ1)
-      by (eapply producible_after_single_step; eauto).
-    destruct (single_single_join tas α β γ1 Hsc Hprod Hαβ Hαγ1)
-      as [τ [Hβτ Hγ1τ]].
-admit.
 Admitted.
 
 Theorem diamond_aux_inner :
