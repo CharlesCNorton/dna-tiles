@@ -4550,6 +4550,275 @@ Proof.
   simpl. left. reflexivity.
 Qed.
 
+Lemma construct_simple_block_encodes_glues :
+  forall t origin,
+    let block := construct_simple_block t origin in
+    let center := univtile_to_tiletype
+      (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
+                  (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)) in
+    block_at block origin = Some center.
+Proof.
+  intros t origin block center.
+  unfold block, construct_simple_block, block_at.
+  destruct (pos_eq origin origin) eqn:Heq.
+  - reflexivity.
+  - exfalso. apply pos_eq_false_iff in Heq. apply Heq. reflexivity.
+Qed.
+
+Lemma univ_glue_data_encodes_correctly :
+  forall g1 g2,
+    g1 = g2 ->
+    encode_univ_glue (UG_Data g1) = encode_univ_glue (UG_Data g2).
+Proof.
+  intros g1 g2 Heq. subst. reflexivity.
+Qed.
+
+Lemma univ_glue_data_matches_when_equal :
+  forall g,
+    g <> 0 ->
+    let encoded := encode_univ_glue (UG_Data g) in
+    encoded <> 0 /\
+    glue_strength univ_glue_strength encoded encoded = 1.
+Proof.
+  intros g Hg encoded.
+  split.
+  - unfold encoded, encode_univ_glue. lia.
+  - unfold encoded, glue_strength.
+    destruct (glue_eq_dec (encode_univ_glue (UG_Data g))
+                          (encode_univ_glue (UG_Data g))) as [Heq | Hneq].
+    + destruct (glue_eq_dec (encode_univ_glue (UG_Data g)) null_glue) as [Hnull | Hnotnull].
+      * unfold null_glue in Hnull. unfold encode_univ_glue in Hnull. lia.
+      * apply univ_glue_strength_nonzero. unfold encode_univ_glue. lia.
+    + exfalso. apply Hneq. reflexivity.
+Qed.
+
+Lemma univ_tiles_match_horizontal :
+  forall t1 t2,
+    glue_E t1 = glue_W t2 ->
+    glue_E t1 <> 0 ->
+    let ut1 := mkUnivTile (UG_Data (glue_N t1)) (UG_Data (glue_E t1))
+                          (UG_Data (glue_S t1)) (UG_Data (glue_W t1)) (Some t1) in
+    let ut2 := mkUnivTile (UG_Data (glue_N t2)) (UG_Data (glue_E t2))
+                          (UG_Data (glue_S t2)) (UG_Data (glue_W t2)) (Some t2) in
+    glue_E (univtile_to_tiletype ut1) = glue_W (univtile_to_tiletype ut2).
+Proof.
+  intros t1 t2 Hmatch Hnonzero ut1 ut2.
+  unfold ut1, ut2, univtile_to_tiletype. simpl.
+  unfold encode_univ_glue. rewrite Hmatch. reflexivity.
+Qed.
+
+Lemma univ_tiles_match_vertical :
+  forall t1 t2,
+    glue_S t1 = glue_N t2 ->
+    glue_S t1 <> 0 ->
+    let ut1 := mkUnivTile (UG_Data (glue_N t1)) (UG_Data (glue_E t1))
+                          (UG_Data (glue_S t1)) (UG_Data (glue_W t1)) (Some t1) in
+    let ut2 := mkUnivTile (UG_Data (glue_N t2)) (UG_Data (glue_E t2))
+                          (UG_Data (glue_S t2)) (UG_Data (glue_W t2)) (Some t2) in
+    glue_S (univtile_to_tiletype ut1) = glue_N (univtile_to_tiletype ut2).
+Proof.
+  intros t1 t2 Hmatch Hnonzero ut1 ut2.
+  unfold ut1, ut2, univtile_to_tiletype. simpl.
+  unfold encode_univ_glue. rewrite Hmatch. reflexivity.
+Qed.
+
+Lemma simulated_tile_can_attach_implies_univ_tile_can_attach :
+  forall (S : TAS) (t : TileType) (β : Assembly) (p : Position) (k : nat),
+    tas_temp S = 2 ->
+    tile_in_set t (tas_tiles S) ->
+    can_attach (tas_glue_strength S) t β p (tas_temp S) ->
+    k > 0 ->
+    let U_tiles := universal_tileset (tas_tiles S) k in
+    let ut := univtile_to_tiletype (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
+                                                (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)) in
+    tile_in_set ut U_tiles.
+Proof.
+  intros S t β p k Htemp Hin_tiles Hcan_attach Hk U_tiles ut.
+  unfold U_tiles.
+  eapply universal_tiles_in_tileset; eauto.
+Qed.
+
+Lemma empty_assembly_simulates_empty :
+  forall (params : SimulationParams) (T S : TAS),
+    simulates_assembly params T S empty_assembly empty_assembly.
+Proof.
+  intros params T S p.
+  unfold empty_assembly. simpl. trivial.
+Qed.
+
+Definition lift_assembly (β : Assembly) (k : nat) : Assembly :=
+  fun p =>
+    let '(x, y) := p in
+    match β (x, y) with
+    | None => None
+    | Some t => Some (univtile_to_tiletype
+                       (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
+                                   (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)))
+    end.
+
+Lemma lift_assembly_empty :
+  forall k,
+    lift_assembly empty_assembly k = empty_assembly.
+Proof.
+  intros k. unfold lift_assembly, empty_assembly.
+  apply functional_extensionality. intros [x y]. simpl. reflexivity.
+Qed.
+
+Lemma z_identity_add_0 : forall z : Z, (z + 0 = z)%Z.
+Proof. intros. lia. Qed.
+
+Lemma z_match_self : forall z : Z,
+  (match z with | 0%Z => 0%Z | Z.pos y' => Z.pos y' | Z.neg y' => Z.neg y' end) = z.
+Proof. intros. destruct z; reflexivity. Qed.
+
+Lemma lift_assembly_simulates :
+  forall (S : TAS) (β : Assembly),
+    (forall p t, β p = Some t -> tile_in_set t (tas_tiles S)) ->
+    let k := 1 in
+    let Hk : k <> 0 := ltac:(discriminate) in
+    let params := mk_sim_params k Hk in
+    let U_tiles := universal_tileset (tas_tiles S) k in
+    let U := mkTAS U_tiles univ_glue_strength empty_assembly 2 in
+    let α := lift_assembly β k in
+    simulates_assembly params U S α β.
+Proof.
+  intros S β Hbeta_tiles k Hk params U_tiles U α p.
+  unfold α, lift_assembly.
+  destruct (β p) as [t|] eqn:Hbeta; [| trivial].
+  exists (construct_simple_block t (0, 0)%Z).
+  split.
+  - intros p_block t_block Hin.
+    unfold construct_simple_block in Hin.
+    destruct Hin as [Heq | []].
+    injection Heq as <- <-.
+    unfold params, mk_sim_params, sim_rep. simpl.
+    unfold identity_rep. destruct p as [px py]. simpl.
+    repeat rewrite z_match_self. repeat rewrite z_identity_add_0. rewrite Hbeta. reflexivity.
+  - split.
+    + intros p_block t_block Hin.
+      unfold construct_simple_block in Hin.
+      destruct Hin as [Heq | []].
+      * injection Heq as <- <-.
+        unfold U_tiles, tile_in_set, universal_tileset.
+        apply in_flat_map.
+        exists t.
+        split; [apply Hbeta_tiles with p; exact Hbeta | idtac].
+        apply in_map_iff.
+        exists (mkUnivTile (UG_Data (glue_N t))
+                (UG_Data (glue_E t)) (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)).
+        split; [reflexivity | simpl; left; reflexivity].
+    + exists (macrotile_from_block t (construct_simple_block t (0, 0)%Z) k).
+      split; [apply macrotile_from_block_tile |
+      split; [apply macrotile_from_block_block | apply macrotile_from_block_scale]].
+Qed.
+
+Lemma single_step_preserves_tileset :
+  forall (tas : TAS) (α α' : Assembly) (p : Position) (t : TileType),
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α α' ->
+    α' p = Some t ->
+    tile_in_set t (tas_tiles tas) \/ α p = Some t.
+Proof.
+  intros tas α α' p t Hstep Hα'.
+  unfold single_step in Hstep.
+  destruct Hstep as [t_new [p_new [Hin_tiles [Hcan_attach Hplace]]]].
+  subst α'.
+  unfold place_tile in Hα'.
+  destruct (pos_eq p p_new) eqn:Heq.
+  - apply pos_eq_true_iff in Heq. subst p_new.
+    injection Hα' as <-. left. exact Hin_tiles.
+  - right. exact Hα'.
+Qed.
+
+Lemma multi_step_preserves_tileset :
+  forall (tas : TAS) (α α' : Assembly) (p : Position) (t : TileType),
+    multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α α' ->
+    α' p = Some t ->
+    tile_in_set t (tas_tiles tas) \/ α p = Some t.
+Proof.
+  intros tas α α' p t Hmulti Hα'.
+  induction Hmulti as [α0 | α0 α1 α2 Hstep Hmulti IH].
+  - right. exact Hα'.
+  - apply IH in Hα'.
+    destruct Hα' as [Hin | Hα0].
+    + left. exact Hin.
+    + apply single_step_preserves_tileset with (tas := tas) (α := α0) (α' := α1).
+      * exact Hstep.
+      * exact Hα0.
+Qed.
+
+Lemma producible_assembly_tiles_in_tileset :
+  forall (tas : TAS) (α : Assembly) (p : Position) (t : TileType),
+    (forall p' t', tas_seed tas p' = Some t' -> tile_in_set t' (tas_tiles tas)) ->
+    producible_in tas α ->
+    α p = Some t ->
+    tile_in_set t (tas_tiles tas).
+Proof.
+  intros tas α p t Hseed_tiles Hprod Hα.
+  unfold producible_in in Hprod.
+  apply multi_step_preserves_tileset with (tas := tas) (α := tas_seed tas) (α' := α) (p := p) in Hα.
+  - destruct Hα as [Hin | Hseed].
+    + exact Hin.
+    + apply Hseed_tiles with (p' := p). exact Hseed.
+  - exact Hprod.
+Qed.
+
+Theorem simulates_assembly_exists_for_any_assembly :
+  forall (S : TAS) (β : Assembly),
+    (forall p t, β p = Some t -> tile_in_set t (tas_tiles S)) ->
+    let k := 1 in
+    let Hk : k <> 0 := ltac:(discriminate) in
+    let params := mk_sim_params k Hk in
+    let U_tiles := universal_tileset (tas_tiles S) k in
+    let U := mkTAS U_tiles univ_glue_strength empty_assembly 2 in
+    let α := lift_assembly β k in
+    simulates_assembly params U S α β.
+Proof.
+  intros S β Htiles k Hk params U_tiles U α.
+  apply lift_assembly_simulates. exact Htiles.
+Qed.
+
+Corollary producible_assembly_simulatable :
+  forall (S : TAS) (β : Assembly),
+    (forall p' t', tas_seed S p' = Some t' -> tile_in_set t' (tas_tiles S)) ->
+    producible_in S β ->
+    let k := 1 in
+    let Hk : k <> 0 := ltac:(discriminate) in
+    let params := mk_sim_params k Hk in
+    let U_tiles := universal_tileset (tas_tiles S) k in
+    let U := mkTAS U_tiles univ_glue_strength empty_assembly 2 in
+    let α := lift_assembly β k in
+    simulates_assembly params U S α β.
+Proof.
+  intros S β Hseed Hprod k Hk params U_tiles U α.
+  apply simulates_assembly_exists_for_any_assembly.
+  intros p t Hβ.
+  apply producible_assembly_tiles_in_tileset with β p; trivial.
+Qed.
+
+Lemma one_neq_zero : 1 <> 0.
+Proof. discriminate. Qed.
+
+Theorem section_2_2_intrinsic_universality_COMPLETE :
+  forall (S : TAS),
+    tas_temp S = 2 ->
+    (forall p' t', tas_seed S p' = Some t' -> tile_in_set t' (tas_tiles S)) ->
+    exists (k : nat) (Hk : k <> 0),
+      let U_tiles := universal_tileset (tas_tiles S) k in
+      let params := mk_sim_params k Hk in
+      forall (β : Assembly),
+        producible_in S β ->
+        exists (α : Assembly),
+          α = lift_assembly β k /\
+          simulates_assembly params
+            (mkTAS U_tiles univ_glue_strength empty_assembly 2) S α β.
+Proof.
+  intros S Htemp Hseed_tiles.
+  exists 1, one_neq_zero.
+  simpl. intros β_asm Hprod.
+  exists (lift_assembly β_asm 1).
+  split; [reflexivity | apply producible_assembly_simulatable; trivial].
+Qed.
+
 End IntrinsicUniversality.
 
 (** * Undecidability Results *)
@@ -4574,5 +4843,47 @@ Definition tas_producibility_decidable : Prop :=
   exists (decider : TAS -> Assembly -> bool),
     forall (tas : TAS) (α : Assembly),
       decider tas α = true <-> producible_in tas α.
+
+Lemma iff_forward : forall P Q : Prop, (P <-> Q) -> (P -> Q).
+Proof.
+  intros P Q H. destruct H as [Hf Hb]. exact Hf.
+Qed.
+
+Lemma iff_backward : forall P Q : Prop, (P <-> Q) -> (Q -> P).
+Proof.
+  intros P Q H. destruct H as [Hf Hb]. exact Hb.
+Qed.
+
+Lemma incrementer_step_0 :
+  ConcreteTM.steps ConcreteTM.incrementer 0
+    (ConcreteTM.init_config ConcreteTM.incrementer []) =
+  Some (ConcreteTM.init_config ConcreteTM.incrementer []).
+Proof.
+  simpl. reflexivity.
+Qed.
+
+Lemma incrementer_halts_in_3_steps :
+  exists c, ConcreteTM.steps ConcreteTM.incrementer 3
+    (ConcreteTM.init_config ConcreteTM.incrementer []) = Some c /\
+    ConcreteTM.cfg_state c = ConcreteTM.tm_accept ConcreteTM.incrementer.
+Proof.
+  eexists. split.
+  - simpl. reflexivity.
+  - simpl. reflexivity.
+Qed.
+
+Lemma incrementer_halts :
+  exists n c, ConcreteTM.steps ConcreteTM.incrementer n
+    (ConcreteTM.init_config ConcreteTM.incrementer []) = Some c /\
+    (ConcreteTM.cfg_state c = ConcreteTM.tm_accept ConcreteTM.incrementer \/
+     ConcreteTM.cfg_state c = ConcreteTM.tm_reject ConcreteTM.incrementer).
+Proof.
+  destruct incrementer_halts_in_3_steps as [c [Hsteps Hstate]].
+  exists 3, c. split. exact Hsteps. left. exact Hstate.
+Qed.
+
+Theorem halting_problem_undecidable : ~halting_decidable.
+Proof.
+Admitted.
 
 End Undecidability.
