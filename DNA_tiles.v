@@ -2693,7 +2693,8 @@ Record Config : Type := mkConfig {
 (** Initial configuration *)
 Definition init_config (M : TuringMachine) (input : list TapeSymbol) : Config :=
   let init_tape := fun pos =>
-    match nth_error input (Z.to_nat pos) with
+    if (pos <? 0)%Z then blank
+    else match nth_error input (Z.to_nat pos) with
     | Some s => s
     | None => blank
     end in
@@ -2871,7 +2872,8 @@ Record Config : Type := mkConfig {
 
 Definition init_config (M : TuringMachine) (input : list TapeSymbol) : Config :=
   let init_tape := fun pos =>
-    match nth_error input (Z.to_nat pos) with
+    if (pos <? 0)%Z then blank
+    else match nth_error input (Z.to_nat pos) with
     | Some s => s
     | None => blank
     end in
@@ -2928,6 +2930,28 @@ Definition incrementer : TuringMachine :=
 Eval compute in (init_config incrementer [1; 1; 1]).
 Eval compute in (step incrementer (init_config incrementer [1; 1; 1])).
 Eval compute in (steps incrementer 10 (init_config incrementer [1; 1; 1])).
+
+(** Test that negative positions correctly get blank *)
+Lemma init_config_negative_positions_blank :
+  forall input : list nat,
+    tape_read (cfg_tape (init_config incrementer input)) (-1)%Z = blank.
+Proof.
+  intros input.
+  unfold init_config, tape_read, blank. simpl.
+  reflexivity.
+Qed.
+
+Lemma init_config_negative_positions_blank_general :
+  forall input : list nat,
+  forall neg_pos : Z,
+    (neg_pos < 0)%Z ->
+    tape_read (cfg_tape (init_config incrementer input)) neg_pos = blank.
+Proof.
+  intros input neg_pos Hneg.
+  unfold init_config, tape_read, blank. simpl.
+  destruct neg_pos; try lia.
+  reflexivity.
+Qed.
 
 End ConcreteTM.
 
