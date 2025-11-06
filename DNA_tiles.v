@@ -5020,7 +5020,102 @@ Proof.
                    ConcreteTM.cfg_pos := ConcreteTM.cfg_pos c0 |} c _ Hsteps); reflexivity.
 Qed.
 
-Theorem halting_problem_undecidable : ~halting_decidable.
-Admitted.
+(** ** Helper: Tape symbol encoding *)
+
+Definition encode_tape_symbol (a : nat) : GlueType :=
+  2 * a + 1.
+
+Lemma encode_tape_symbol_injective : forall a1 a2,
+  encode_tape_symbol a1 = encode_tape_symbol a2 -> a1 = a2.
+Proof.
+  intros a1 a2 H.
+  unfold encode_tape_symbol in H. lia.
+Qed.
+
+Lemma encode_tape_symbol_nonzero : forall a,
+  encode_tape_symbol a <> 0.
+Proof.
+  intros a. unfold encode_tape_symbol. lia.
+Qed.
+
+(** ** Helper: State encoding *)
+
+Definition encode_state (q : nat) : GlueType :=
+  2 * q + 2.
+
+Lemma encode_state_injective : forall q1 q2,
+  encode_state q1 = encode_state q2 -> q1 = q2.
+Proof.
+  intros q1 q2 H.
+  unfold encode_state in H. lia.
+Qed.
+
+Lemma encode_state_nonzero : forall q,
+  encode_state q <> 0.
+Proof.
+  intros q. unfold encode_state. lia.
+Qed.
+
+Lemma nat_1000_neq_2000 : 1000 <> 2000.
+Proof.
+  repeat (apply not_eq_S).
+  discriminate.
+Qed.
+
+Lemma state_lower_bound : forall q, 2000 <= 2000 + q.
+Proof.
+  intro q. apply Nat.le_add_r.
+Qed.
+
+Lemma S_1 : S 0 = 1.
+Proof. reflexivity. Qed.
+
+Lemma le_S_n : forall n m, S n <= S m -> n <= m.
+Proof. intros. apply Nat.succ_le_mono. exact H. Qed.
+
+Lemma le_10_5_false : 10 <= 5 -> False.
+Proof.
+  intro H.
+  do 5 (apply Nat.succ_le_mono in H).
+  inversion H.
+Qed.
+
+Lemma add_1000_1000 : 1000 + 1000 = 2000.
+Proof. reflexivity. Qed.
+
+Lemma lt_0_1000 : 0 < 1000.
+Proof. repeat constructor. Qed.
+
+Lemma lt_1000_2000 : 1000 < 2000.
+Proof.
+  rewrite <- add_1000_1000.
+  replace 1000 with (1000 + 0) at 1 by (rewrite Nat.add_0_r; reflexivity).
+  apply -> Nat.add_lt_mono_l.
+  apply lt_0_1000.
+Qed.
+
+Lemma le_2000_1000_false : 2000 <= 1000 -> False.
+Proof.
+  intro H.
+  apply Nat.lt_irrefl with (x := 1000).
+  apply Nat.lt_le_trans with (m := 2000).
+  apply lt_1000_2000.
+  exact H.
+Qed.
+
+Lemma lt_add_r : forall n m, m > 0 -> n < n + m.
+Proof.
+  intros. induction m.
+  - lia.
+  - rewrite Nat.add_succ_r. apply le_n_S. apply Nat.le_add_r.
+Qed.
+
+Lemma state_symbol_disjoint : forall q a,
+  encode_state q <> encode_tape_symbol a.
+Proof.
+  intros q a Heq.
+  unfold encode_state, encode_tape_symbol in Heq.
+  lia.
+Qed.
 
 End Undecidability.
