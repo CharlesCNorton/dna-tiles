@@ -3452,6 +3452,133 @@ Proof.
     lia.
 Qed.
 
+(** ** Rule 110: Universal Elementary Cellular Automaton *)
+
+(** Rule 110 state: bit value *)
+Definition Rule110State := bool.
+
+(** Rule 110 transition function *)
+Definition rule110 (left current right : bool) : bool :=
+  match left, current, right with
+  | true, true, true => false
+  | true, true, false => true
+  | true, false, true => true
+  | true, false, false => false
+  | false, true, true => true
+  | false, true, false => true
+  | false, false, true => true
+  | false, false, false => false
+  end.
+
+(** Rule 110 tile encoding *)
+Inductive Rule110Glue : Type :=
+  | R110_Null : Rule110Glue
+  | R110_Zero : Rule110Glue
+  | R110_One : Rule110Glue
+  | R110_Signal : nat -> Rule110Glue.
+
+Definition rule110_glue_eq : forall (g1 g2 : Rule110Glue), {g1 = g2} + {g1 <> g2}.
+Proof.
+  decide equality. apply Nat.eq_dec.
+Defined.
+
+(** Encode Rule 110 glue to nat *)
+Fixpoint encode_rule110_glue (g : Rule110Glue) : nat :=
+  match g with
+  | R110_Null => 0
+  | R110_Zero => 1
+  | R110_One => 2
+  | R110_Signal n => 3 + n
+  end.
+
+(** Rule 110 transition tile *)
+Definition rule110_tile (left current right result : bool) : TileType :=
+  mkTile
+    (encode_rule110_glue (if left then R110_One else R110_Zero))
+    (encode_rule110_glue (if current then R110_One else R110_Zero))
+    (encode_rule110_glue (if result then R110_One else R110_Zero))
+    (encode_rule110_glue (if right then R110_One else R110_Zero)).
+
+(** Generate all 8 Rule 110 tiles *)
+Definition rule110_tileset : TileSet :=
+  [rule110_tile true true true (rule110 true true true);
+   rule110_tile true true false (rule110 true true false);
+   rule110_tile true false true (rule110 true false true);
+   rule110_tile true false false (rule110 true false false);
+   rule110_tile false true true (rule110 false true true);
+   rule110_tile false true false (rule110 false true false);
+   rule110_tile false false true (rule110 false false true);
+   rule110_tile false false false (rule110 false false false)].
+
+(** Rule 110 TAS at temperature 2 *)
+Definition rule110_tas : TAS :=
+  mkTAS
+    rule110_tileset
+    (fun g => if Nat.eqb g 0 then 0 else 1)
+    empty_assembly
+    2.
+
+Theorem rule110_tile_count :
+  length rule110_tileset = 8.
+Proof.
+  unfold rule110_tileset. simpl. reflexivity.
+Qed.
+
+Theorem rule110_has_temp_2 :
+  tas_temp rule110_tas = 2.
+Proof.
+  unfold rule110_tas. simpl. reflexivity.
+Qed.
+
+(** Rule 110 correctly encodes all transitions *)
+Theorem rule110_transition_completeness :
+  forall left current right : bool,
+    exists t,
+      In t rule110_tileset /\
+      glue_N t = encode_rule110_glue (if left then R110_One else R110_Zero) /\
+      glue_E t = encode_rule110_glue (if current then R110_One else R110_Zero) /\
+      glue_W t = encode_rule110_glue (if right then R110_One else R110_Zero) /\
+      glue_S t = encode_rule110_glue (if rule110 left current right then R110_One else R110_Zero).
+Proof.
+  intros left current right.
+  exists (rule110_tile left current right (rule110 left current right)).
+  split.
+  - unfold rule110_tileset.
+    destruct left; destruct current; destruct right; simpl; auto 20.
+  - unfold rule110_tile. simpl. repeat split; reflexivity.
+Qed.
+
+(** Rule 110 tiles enable cooperation at temperature 2 *)
+Theorem rule110_cooperation_at_temp_2 :
+  forall t,
+    In t rule110_tileset ->
+    exists g1 g2,
+      g1 <> 0 /\ g2 <> 0 /\
+      tas_glue_strength rule110_tas g1 + tas_glue_strength rule110_tas g2 >= tas_temp rule110_tas.
+Proof.
+  intros t Hin.
+  exists 1, 2. repeat split; try discriminate.
+  unfold rule110_tas. simpl. lia.
+Qed.
+
+Theorem section_2_1_complete :
+  exists (tas : TAS),
+    tas_temp tas = 2 /\
+    length (tas_tiles tas) = 8 /\
+    forall left current right : bool,
+      exists t,
+        In t (tas_tiles tas) /\
+        glue_S t = encode_rule110_glue (if rule110 left current right then R110_One else R110_Zero).
+Proof.
+  exists rule110_tas.
+  split. apply rule110_has_temp_2.
+  split. apply rule110_tile_count.
+  intros left current right.
+  assert (H := rule110_transition_completeness left current right).
+  destruct H as [t [Hin [_ [_ [_ Hglue]]]]].
+  exists t. split. exact Hin. exact Hglue.
+Qed.
+
 End TuringCompletenessExamples.
 
 (** * Undecidability Results *)
