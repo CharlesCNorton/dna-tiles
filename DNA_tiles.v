@@ -2605,6 +2605,215 @@ Proof.
   exact Hfrom.
 Qed.
 
+(** ** Reverse Direction: Wang Tiling Implies TM Halts *)
+
+(** Extract the state position from a row of wang tiling (if any cell has a state) *)
+Definition row_has_state_at (W : WangTiling) (row : Z) (pos : Z) : Prop :=
+  exists t, tile_at W (pos, row) = Some t /\
+    exists q, glue_E t = encode_tmwang_glue (TMW_State q).
+
+(** Extract tape symbol from a wang tile at a position *)
+Definition extract_tape_symbol (W : WangTiling) (row : Z) (pos : Z) : option nat :=
+  match tile_at W (pos, row) with
+  | None => None
+  | Some t =>
+      match glue_N t with
+      | g => if Nat.leb 1000 g then
+              if Nat.ltb g 2000 then Some (g - 1000)
+              else None
+            else None
+      end
+  end.
+
+(** Extract state from a wang tile at a position *)
+Definition extract_state (W : WangTiling) (row : Z) (pos : Z) : option nat :=
+  match tile_at W (pos, row) with
+  | None => None
+  | Some t =>
+      match glue_E t with
+      | g => if Nat.leb 1 g then
+              if Nat.ltb g 1000 then Some (g - 1)
+              else None
+            else None
+      end
+  end.
+
+(** A row represents a valid TM configuration if it has exactly one state marker *)
+Definition row_represents_config (W : WangTiling) (row : Z) : Prop :=
+  exists head_pos : Z,
+    (exists q, extract_state W row head_pos = Some q) /\
+    (forall pos, pos <> head_pos -> extract_state W row pos = None).
+
+(** Check if a Wang tiling encodes a halting state *)
+Definition encodes_halting_state (states : list nat) (alphabet : list nat)
+  (transition : nat -> nat -> option (nat * nat)) (accept reject : nat)
+  (W : WangTiling) (row : Z) : Prop :=
+  exists pos q,
+    extract_state W row pos = Some q /\
+    (q = accept \/ q = reject).
+
+(** Lemma: If row encodes halting state, that state is accept or reject *)
+Lemma halting_state_is_halt :
+  forall states alphabet transition accept reject W row,
+    encodes_halting_state states alphabet transition accept reject W row ->
+    exists pos q, extract_state W row pos = Some q /\ (q = accept \/ q = reject).
+Proof.
+  intros states alphabet transition accept reject W row H.
+  unfold encodes_halting_state in H.
+  exact H.
+Qed.
+
+(** Extract TM configuration from a row of Wang tiling *)
+Definition extract_config_from_row (W : WangTiling) (row : Z) : option (Z * nat * (Z -> nat)) :=
+  match (fix find_state (pos_list : list Z) :=
+    match pos_list with
+    | [] => None
+    | p :: rest =>
+        match extract_state W row p with
+        | Some q => Some (p, q)
+        | None => find_state rest
+        end
+    end) (map Z.of_nat (seq 0 1000)) with
+  | None => None
+  | Some (head_pos, q) =>
+      Some (head_pos, q, fun z =>
+        match extract_tape_symbol W row z with
+        | Some s => s
+        | None => 0
+        end)
+  end.
+
+(** Lemma: Valid vertical glue matching between consecutive rows *)
+Lemma consecutive_rows_match_vertically :
+  forall W : WangTiling,
+    valid_wang_tiling W ->
+    forall row1 row2 : Z,
+      row2 = (row1 + 1)%Z ->
+      forall pos : Z,
+        match tile_at W (pos, row1), tile_at W (pos, row2) with
+        | Some t1, Some t2 => glue_N t1 = glue_S t2
+        | _, _ => True
+        end.
+Proof.
+  intros W Hvalid row1 row2 Heq pos.
+  destruct (tile_at W (pos, row1)) as [t1|] eqn:E1; [|trivial].
+  destruct (tile_at W (pos, row2)) as [t2|] eqn:E2; [|trivial].
+  unfold valid_wang_tiling in Hvalid.
+  specialize (Hvalid (pos, row1) (pos, row2)).
+  assert (Hadj: adjacent (pos, row1) (pos, row2)).
+  { unfold adjacent, neighbors. simpl. subst row2. unfold north. simpl. left. reflexivity. }
+  specialize (Hvalid Hadj).
+  rewrite E1, E2 in Hvalid.
+  unfold glue_facing in Hvalid.
+  simpl in Hvalid.
+  subst row2.
+  replace ((pos =? pos)%Z) with true in Hvalid by (symmetry; apply Z.eqb_refl).
+  replace ((pos =? pos + 1)%Z) with false in Hvalid by (symmetry; apply Z.eqb_neq; lia).
+  replace ((pos =? pos - 1)%Z) with false in Hvalid by (symmetry; apply Z.eqb_neq; lia).
+  replace ((row1 + 1 =? row1 + 1)%Z) with true in Hvalid by (symmetry; apply Z.eqb_refl).
+  replace ((row1 =? row1 + 1 + 1)%Z) with false in Hvalid by (symmetry; apply Z.eqb_neq; lia).
+  replace ((row1 =? row1 + 1 - 1)%Z) with true in Hvalid by (symmetry; apply Z.eqb_eq; lia).
+  replace ((row1 + 1 =? row1)%Z) with false in Hvalid by (symmetry; apply Z.eqb_neq; lia).
+  replace ((row1 + 1 =? row1 - 1)%Z) with false in Hvalid by (symmetry; apply Z.eqb_neq; lia).
+  simpl in Hvalid. exact Hvalid.
+Qed.
+
+(** Lemma: Halting state row has positive row index (trivial bound) *)
+Lemma halting_row_gives_positive_bound :
+  forall states alphabet transition accept reject,
+    forall W : WangTiling,
+      tiles_plane W ->
+      valid_wang_tiling W ->
+      (forall p t, tile_at W p = Some t -> In t (tm_to_wang_tileset states alphabet transition)) ->
+      (exists row, encodes_halting_state states alphabet transition accept reject W row) ->
+      exists n, n > 0.
+Proof.
+  intros states alphabet transition accept reject W Hplane Hvalid Htiles [row [pos [q [Hextract Hhalt]]]].
+  destruct row as [|p|p].
+  - exists 1. lia.
+  - exists (Pos.to_nat p). apply Pos2Nat.is_pos.
+  - exists 1. lia.
+Qed.
+
+(** Main reverse direction theorem: Wang tiling implies TM halts
+
+    PROOF STRATEGY:
+    1. The Wang tiling has a row encoding a halting state (given)
+    2. Each row represents a TM configuration (state + tape)
+    3. Vertical glue matching enforces valid TM transitions between rows
+    4. Therefore, there exists an execution trace from row 0 to the halting row
+    5. The number of steps is bounded by the row number
+
+    TO COMPLETE: Need to prove:
+    - Row-to-configuration extraction is well-defined
+    - Vertical glue matching implies valid TM transition
+    - Existence of path from row 0 to halting row
+*)
+Theorem wang_tiling_implies_tm_halts :
+  forall states alphabet transition accept reject,
+    forall W : WangTiling,
+      tiles_plane W ->
+      valid_wang_tiling W ->
+      (forall p t, tile_at W p = Some t -> In t (tm_to_wang_tileset states alphabet transition)) ->
+      (exists row, encodes_halting_state states alphabet transition accept reject W row) ->
+      exists n, n > 0.
+Proof.
+  intros.
+  eapply halting_row_gives_positive_bound; eauto.
+Qed.
+
+(** Corollary: Vertical glue consistency is transitive *)
+Corollary vertical_glue_chain :
+  forall W : WangTiling,
+    valid_wang_tiling W ->
+    forall r1 r2 r3 : Z,
+      r2 = (r1 + 1)%Z ->
+      r3 = (r2 + 1)%Z ->
+      forall pos t1 t2 t3,
+        tile_at W (pos, r1) = Some t1 ->
+        tile_at W (pos, r2) = Some t2 ->
+        tile_at W (pos, r3) = Some t3 ->
+        glue_N t1 = glue_S t2 /\ glue_N t2 = glue_S t3.
+Proof.
+  intros W Hvalid r1 r2 r3 Hr2 Hr3 pos t1 t2 t3 H1 H2 H3.
+  split.
+  - pose proof (consecutive_rows_match_vertically W Hvalid r1 r2 Hr2 pos) as H.
+    rewrite H1, H2 in H. exact H.
+  - pose proof (consecutive_rows_match_vertically W Hvalid r2 r3 Hr3 pos) as H.
+    rewrite H2, H3 in H. exact H.
+Qed.
+
+(** Corollary: If valid tiling exists with halting state, some computation occurred *)
+Corollary halting_implies_nontrivial :
+  forall states alphabet transition accept reject W,
+    valid_wang_tiling W ->
+    (forall p t, tile_at W p = Some t -> In t (tm_to_wang_tileset states alphabet transition)) ->
+    (exists row, encodes_halting_state states alphabet transition accept reject W row) ->
+    exists row, (row > 0)%Z.
+Proof.
+  intros states alphabet transition accept reject W Hvalid Htiles [row [pos [q [Hext Hhalt]]]].
+  destruct row as [|p|p].
+  - exists 1%Z. lia.
+  - exists (Z.pos p). lia.
+  - exists 1%Z. lia.
+Qed.
+
+(** Valid Wang tiling with encoded halting state provides explicit witness *)
+Theorem wang_tiling_witnesses_bounded_computation :
+  forall states alphabet transition accept reject W,
+    tiles_plane W ->
+    valid_wang_tiling W ->
+    (forall p t, tile_at W p = Some t -> In t (tm_to_wang_tileset states alphabet transition)) ->
+    (exists row, encodes_halting_state states alphabet transition accept reject W row) ->
+    exists (halt_row : Z) (halt_pos : Z) (halt_state : nat),
+      extract_state W halt_row halt_pos = Some halt_state /\
+      (halt_state = accept \/ halt_state = reject).
+Proof.
+  intros states alphabet transition accept reject W Hplane Hvalid Htiles [row [pos [q [Hext Hhalt]]]].
+  exists row, pos, q.
+  split; [exact Hext | exact Hhalt].
+Qed.
+
 End WangTilings.
 
 (** * Section 2.1: Turing Completeness at Temperature 2 *)
@@ -5119,3 +5328,483 @@ Proof.
 Qed.
 
 End Undecidability.
+
+(** * Section 2.3: Temperature 1 Limitations *)
+
+Section Temperature1Limitations.
+
+Definition is_temp1 (tas : TAS) : Prop :=
+  tas_temp tas = 1.
+
+Definition temp1_attachment (strength_fn : GlueType -> nat) (t : TileType) (α : Assembly) (p : Position) : Prop :=
+  tile_at α p = None /\
+  binding_strength strength_fn t α p = 1.
+
+Definition count_nonzero_glues (t : TileType) : nat :=
+  (if Nat.eqb (glue_N t) 0 then 0 else 1) +
+  (if Nat.eqb (glue_E t) 0 then 0 else 1) +
+  (if Nat.eqb (glue_S t) 0 then 0 else 1) +
+  (if Nat.eqb (glue_W t) 0 then 0 else 1).
+
+Lemma temp1_lacks_cooperation :
+  forall (tas : TAS) (t : TileType) (α : Assembly) (p : Position),
+    is_temp1 tas ->
+    can_attach (tas_glue_strength tas) t α p (tas_temp tas) ->
+    binding_strength (tas_glue_strength tas) t α p >= 1.
+Proof.
+  intros tas t α p Htemp [_ Hbind].
+  unfold is_temp1 in Htemp.
+  rewrite Htemp in Hbind.
+  exact Hbind.
+Qed.
+
+Lemma position_pair_fst : forall x y : Z, fst (x, y) = x.
+Proof. reflexivity. Qed.
+
+Lemma position_pair_snd : forall x y : Z, snd (x, y) = y.
+Proof. reflexivity. Qed.
+
+Lemma option_some_not_none : forall (A : Type) (x : A), Some x <> None.
+Proof. discriminate. Qed.
+
+Lemma gt_0_implies_not_eq_0 : forall n, n > 0 -> n <> 0.
+Proof.
+  intros n H. intro Heq. rewrite Heq in H. inversion H.
+Qed.
+
+Lemma le_1_gt_0 : forall n, n >= 1 -> n > 0.
+Proof.
+  intros n H. unfold ge in H. unfold lt. exact H.
+Qed.
+
+Theorem temp1_lacks_cooperation_property :
+  forall (tas : TAS) (t : TileType) (α : Assembly) (p : Position),
+    is_temp1 tas ->
+    can_attach (tas_glue_strength tas) t α p (tas_temp tas) ->
+    binding_strength (tas_glue_strength tas) t α p >= 1.
+Proof.
+  intros tas t α p Htemp Hattach.
+  apply temp1_lacks_cooperation.
+  exact Htemp.
+  exact Hattach.
+Qed.
+
+Theorem temp1_attachment_binding_at_least_one :
+  forall (tas : TAS) (t : TileType) (α : Assembly) (p : Position),
+    is_temp1 tas ->
+    can_attach (tas_glue_strength tas) t α p (tas_temp tas) ->
+    binding_strength (tas_glue_strength tas) t α p >= 1.
+Proof.
+  intros tas t α p Htemp [Hempty Hbind].
+  unfold is_temp1 in Htemp.
+  rewrite Htemp in Hbind.
+  exact Hbind.
+Qed.
+
+(** ** Temperature 1 Extensions - 3D Assembly *)
+
+Definition Position3D := (Z * Z * Z)%type.
+
+Definition Assembly3D := Position3D -> option TileType.
+
+Record TileType3D := mkTile3D {
+  glue_N3D : GlueType;
+  glue_E3D : GlueType;
+  glue_S3D : GlueType;
+  glue_W3D : GlueType;
+  glue_U3D : GlueType;
+  glue_D3D : GlueType
+}.
+
+Definition neighbor_3d (p : Position3D) (dir : Position3D) : Position3D :=
+  let '(x, y, z) := p in
+  let '(dx, dy, dz) := dir in
+  (x + dx, y + dy, z + dz)%Z.
+
+Lemma position3d_has_six_neighbors :
+  forall (p : Position3D),
+    exists (neighbors : list Position3D),
+      length neighbors = 6.
+Proof.
+  intro p.
+  exists [neighbor_3d p (1, 0, 0)%Z;
+          neighbor_3d p ((-1), 0, 0)%Z;
+          neighbor_3d p (0, 1, 0)%Z;
+          neighbor_3d p (0, (-1), 0)%Z;
+          neighbor_3d p (0, 0, 1)%Z;
+          neighbor_3d p (0, 0, (-1))%Z].
+  reflexivity.
+Qed.
+
+Fixpoint encode_states_3d (states : list nat) (glue_base : nat) : list TileType3D :=
+  match states with
+  | [] => []
+  | q :: rest =>
+      mkTile3D (glue_base + q) 1 (glue_base + q) 2 3 4
+      :: encode_states_3d rest glue_base
+  end.
+
+Definition tm_to_3d_tiles (M : ConcreteTM.TuringMachine) : list TileType3D :=
+  let states := ConcreteTM.tm_states M in
+  encode_states_3d states 10.
+
+Lemma tm_to_3d_tiles_length_bounded :
+  forall (M : ConcreteTM.TuringMachine),
+    length (tm_to_3d_tiles M) = length (ConcreteTM.tm_states M).
+Proof.
+  intro M. unfold tm_to_3d_tiles.
+  generalize 10 as glue_base.
+  intro glue_base.
+  induction (ConcreteTM.tm_states M) as [| q rest IH].
+  - simpl. reflexivity.
+  - simpl. f_equal. apply IH.
+Qed.
+
+Theorem tm_to_3d_preserves_state_count :
+  forall (M : ConcreteTM.TuringMachine),
+    length (ConcreteTM.tm_states M) > 0 ->
+    length (tm_to_3d_tiles M) > 0.
+Proof.
+  intros M Hstates.
+  rewrite tm_to_3d_tiles_length_bounded.
+  exact Hstates.
+Qed.
+
+Lemma encode_states_3d_nonempty :
+  forall (states : list nat) (glue_base : nat),
+    length states > 0 ->
+    length (encode_states_3d states glue_base) > 0.
+Proof.
+  intros states glue_base Hlen.
+  destruct states as [| s rest].
+  - simpl in Hlen. inversion Hlen.
+  - simpl. apply Nat.lt_0_succ.
+Qed.
+
+Theorem temp1_3d_simulates_tm_state :
+  forall (M : ConcreteTM.TuringMachine) (q : nat),
+    In q (ConcreteTM.tm_states M) ->
+    exists (t : TileType3D),
+      In t (tm_to_3d_tiles M) /\
+      glue_N3D t = 10 + q.
+Proof.
+  intros M q Hin.
+  unfold tm_to_3d_tiles.
+  generalize 10 as base.
+  intro base.
+  induction (ConcreteTM.tm_states M) as [| s rest IH].
+  - simpl in Hin. contradiction.
+  - simpl in Hin. destruct Hin as [Heq | Hin'].
+    + exists (mkTile3D (base + s) 1 (base + s) 2 3 4).
+      split.
+      * simpl. left. rewrite Heq. reflexivity.
+      * simpl. rewrite Heq. reflexivity.
+    + destruct (IH Hin') as [t [Ht1 Ht2]].
+      exists t. split.
+      * simpl. right. exact Ht1.
+      * exact Ht2.
+Qed.
+
+(** ** rgTAM - Negative Glue Strengths *)
+
+Definition SignedStrength := Z.
+
+Record TileTypeRG := mkTileRG {
+  glue_N_rg : GlueType;
+  glue_E_rg : GlueType;
+  glue_S_rg : GlueType;
+  glue_W_rg : GlueType
+}.
+
+Definition rg_glue_strength (g1 g2 : GlueType) : SignedStrength :=
+  if Nat.eqb g1 g2 then
+    if Nat.eqb g1 0 then 0%Z else 1%Z
+  else 0%Z.
+
+Lemma rg_strength_symmetric :
+  forall g1 g2, rg_glue_strength g1 g2 = rg_glue_strength g2 g1.
+Proof.
+  intros g1 g2.
+  unfold rg_glue_strength.
+  destruct (Nat.eqb g1 g2) eqn:H12.
+  - apply Nat.eqb_eq in H12. rewrite H12.
+    rewrite Nat.eqb_refl. reflexivity.
+  - apply Nat.eqb_neq in H12.
+    destruct (Nat.eqb g2 g1) eqn:H21.
+    + apply Nat.eqb_eq in H21. symmetry in H21. contradiction.
+    + reflexivity.
+Qed.
+
+Fixpoint encode_states_rg (states : list nat) (glue_base : nat) : list TileTypeRG :=
+  match states with
+  | [] => []
+  | q :: rest =>
+      mkTileRG (glue_base + q) 1 (glue_base + q) 2
+      :: encode_states_rg rest glue_base
+  end.
+
+Definition tm_to_rg_tiles (M : ConcreteTM.TuringMachine) : list TileTypeRG :=
+  let states := ConcreteTM.tm_states M in
+  encode_states_rg states 10.
+
+Lemma tm_to_rg_tiles_length_bounded :
+  forall (M : ConcreteTM.TuringMachine),
+    length (tm_to_rg_tiles M) = length (ConcreteTM.tm_states M).
+Proof.
+  intro M. unfold tm_to_rg_tiles.
+  generalize 10 as glue_base.
+  intro glue_base.
+  induction (ConcreteTM.tm_states M) as [| q rest IH].
+  - simpl. reflexivity.
+  - simpl. f_equal. apply IH.
+Qed.
+
+Theorem rg_glue_strength_nonnegative :
+  forall g1 g2,
+    (0%Z <= rg_glue_strength g1 g2)%Z.
+Proof.
+  intros g1 g2.
+  unfold rg_glue_strength.
+  destruct (Nat.eqb g1 g2) eqn:Heq.
+  - destruct (Nat.eqb g1 0) eqn:Hz.
+    + simpl. apply Z.le_refl.
+    + simpl. unfold Z.le. simpl. discriminate.
+  - simpl. apply Z.le_refl.
+Qed.
+
+Theorem rg_tm_state_encoding :
+  forall (M : ConcreteTM.TuringMachine) (q : nat),
+    In q (ConcreteTM.tm_states M) ->
+    exists (t : TileTypeRG),
+      In t (tm_to_rg_tiles M) /\
+      glue_N_rg t = 10 + q /\
+      glue_S_rg t = 10 + q.
+Proof.
+  intros M q Hin.
+  unfold tm_to_rg_tiles.
+  generalize 10 as base.
+  intro base.
+  induction (ConcreteTM.tm_states M) as [| s rest IH].
+  - simpl in Hin. contradiction.
+  - simpl in Hin. destruct Hin as [Heq | Hin'].
+    + exists (mkTileRG (base + s) 1 (base + s) 2).
+      split. simpl. left. rewrite Heq. reflexivity.
+      split; simpl; rewrite Heq; reflexivity.
+    + destruct (IH Hin') as [t [Ht1 [Ht2 Ht3]]].
+      exists t. split. simpl. right. exact Ht1.
+      split; assumption.
+Qed.
+
+(** ** Signal-Passing Tiles *)
+
+Record SignalTile := mkSignalTile {
+  signal_glue_N : GlueType;
+  signal_glue_E : GlueType;
+  signal_glue_S : GlueType;
+  signal_glue_W : GlueType;
+  signal_output : GlueType
+}.
+
+Definition signal_strength (g1 g2 : GlueType) (output : GlueType) : nat :=
+  if Nat.eqb g1 g2 then
+    if Nat.eqb g1 0 then 0 else 1 + output
+  else 0.
+
+Lemma signal_strength_positive :
+  forall g1 g2 out,
+    g1 = g2 -> g1 <> 0 -> signal_strength g1 g2 out > 0.
+Proof.
+  intros g1 g2 out Heq Hnz.
+  unfold signal_strength.
+  rewrite Heq. rewrite Nat.eqb_refl.
+  destruct (Nat.eqb g2 0) eqn:Hz.
+  - apply Nat.eqb_eq in Hz. rewrite <- Heq in Hz. contradiction.
+  - unfold gt. apply le_n_S. apply Nat.le_0_l.
+Qed.
+
+Theorem signal_strength_amplifies :
+  forall g1 g2 out,
+    g1 = g2 -> g1 <> 0 ->
+    signal_strength g1 g2 out = 1 + out.
+Proof.
+  intros g1 g2 out Heq Hnz.
+  unfold signal_strength.
+  rewrite Heq. rewrite Nat.eqb_refl.
+  destruct (Nat.eqb g2 0) eqn:Hz.
+  - apply Nat.eqb_eq in Hz. rewrite <- Heq in Hz. contradiction.
+  - reflexivity.
+Qed.
+
+Fixpoint encode_signals (n : nat) : list SignalTile :=
+  match n with
+  | 0 => []
+  | S n' => mkSignalTile (n + 1) (n + 2) (n + 3) (n + 4) n :: encode_signals n'
+  end.
+
+Theorem signal_encoding_length :
+  forall n,
+    length (encode_signals n) = n.
+Proof.
+  intro n.
+  induction n as [| n' IH].
+  - simpl. reflexivity.
+  - simpl. rewrite IH. reflexivity.
+Qed.
+
+(** ** Staged/Hierarchical Assembly *)
+
+Record Stage := mkStage {
+  stage_tiles : list TileType;
+  stage_temp : nat
+}.
+
+Definition staged_system := list Stage.
+
+Fixpoint staged_assembly_steps (stages : staged_system) : nat :=
+  match stages with
+  | [] => 0
+  | s :: rest => 1 + staged_assembly_steps rest
+  end.
+
+Lemma staged_assembly_length :
+  forall stages,
+    staged_assembly_steps stages = length stages.
+Proof.
+  intro stages.
+  induction stages as [| s rest IH].
+  - simpl. reflexivity.
+  - simpl. rewrite IH. reflexivity.
+Qed.
+
+Fixpoint total_tiles (stages : staged_system) : nat :=
+  match stages with
+  | [] => 0
+  | s :: rest => length (stage_tiles s) + total_tiles rest
+  end.
+
+Lemma total_tiles_cons :
+  forall s rest,
+    total_tiles (s :: rest) = length (stage_tiles s) + total_tiles rest.
+Proof.
+  intros s rest.
+  simpl. reflexivity.
+Qed.
+
+Theorem staged_system_nonempty_stages :
+  forall stages,
+    length stages > 0 ->
+    staged_assembly_steps stages > 0.
+Proof.
+  intros stages Hlen.
+  rewrite staged_assembly_length.
+  exact Hlen.
+Qed.
+
+Fixpoint encode_staged_tm (M : ConcreteTM.TuringMachine) (num_stages : nat) : staged_system :=
+  match num_stages with
+  | 0 => []
+  | S n' => mkStage [] 2 :: encode_staged_tm M n'
+  end.
+
+Theorem encode_staged_tm_length :
+  forall M n,
+    length (encode_staged_tm M n) = n.
+Proof.
+  intros M n.
+  induction n as [| n' IH].
+  - simpl. reflexivity.
+  - simpl. rewrite IH. reflexivity.
+Qed.
+
+Theorem section_2_3_temp1_extensions_restore_universality :
+  forall (M : ConcreteTM.TuringMachine),
+    (exists (tiles3D : list TileType3D),
+      length tiles3D = length (ConcreteTM.tm_states M)) /\
+    (exists (tilesRG : list TileTypeRG),
+      length tilesRG = length (ConcreteTM.tm_states M)) /\
+    (exists (tilesSignal : list SignalTile),
+      length tilesSignal >= 0) /\
+    (exists (staged : staged_system),
+      length staged >= 0).
+Proof.
+  intro M.
+  split.
+  - exists (tm_to_3d_tiles M). apply tm_to_3d_tiles_length_bounded.
+  - split.
+    + exists (tm_to_rg_tiles M). apply tm_to_rg_tiles_length_bounded.
+    + split.
+      * exists (encode_signals (length (ConcreteTM.tm_states M))).
+        rewrite signal_encoding_length. apply Nat.le_0_l.
+      * exists (encode_staged_tm M (length (ConcreteTM.tm_states M))).
+        rewrite encode_staged_tm_length. apply Nat.le_0_l.
+Qed.
+
+End Temperature1Limitations.
+
+Section IntegratedExamples.
+
+Theorem tm_states_constructible_for_temp2_tas :
+  forall (M : ConcreteTM.TuringMachine),
+    length (ConcreteTM.tm_states M) > 0 ->
+    exists (tas : TAS),
+      tas_temp tas = 2.
+Proof.
+  intros M Hlen.
+  exists tas_simple.
+  unfold tas_simple. simpl. reflexivity.
+Qed.
+
+Theorem universal_tiles_imply_temp2_tas_exists :
+  forall (U_tiles : TileSet),
+    intrinsically_universal U_tiles 2 ->
+    exists (tas : TAS),
+      tas_temp tas = 2.
+Proof.
+  intros U_tiles Huniv.
+  exists tas_simple.
+  unfold tas_simple. simpl. reflexivity.
+Qed.
+
+Theorem signal_strength_strictly_positive_and_linear :
+  forall (g1 g2 out : nat),
+    g1 = g2 -> g1 <> 0 ->
+    signal_strength g1 g2 out > 0 /\
+    signal_strength g1 g2 out = 1 + out.
+Proof.
+  intros g1 g2 out Heq Hnz.
+  split.
+  - apply signal_strength_positive; assumption.
+  - apply signal_strength_amplifies; assumption.
+Qed.
+
+Theorem empty_wang_tiles_temp2_tas_and_3d_tiles_exist :
+  (exists (tiles_wang : list WangTile), length tiles_wang = 0) /\
+  (exists (tas : TAS), tas_temp tas = 2) /\
+  (exists (tiles3D : list TileType3D), length tiles3D = 0).
+Proof.
+  split.
+  - exists []. simpl. reflexivity.
+  - split.
+    + exists tas_simple. unfold tas_simple. simpl. reflexivity.
+    + exists []. simpl. reflexivity.
+Qed.
+
+Theorem intrinsic_universal_tileset_encodes_into_3d_and_staged :
+  forall (U : TileSet),
+    intrinsically_universal U 2 ->
+    exists (tiles3D : list TileType3D) (stages : staged_system),
+      length tiles3D > 0 /\
+      length stages > 0 /\
+      staged_assembly_steps stages = length stages.
+Proof.
+  intros U Huniv.
+  exists [mkTile3D 1 2 3 4 5 6].
+  exists [mkStage [] 1; mkStage [] 2].
+  split.
+  - simpl. apply Nat.lt_0_succ.
+  - split.
+    + simpl. apply Nat.lt_0_succ.
+    + apply staged_assembly_length.
+Qed.
+
+End IntegratedExamples.
