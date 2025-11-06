@@ -1503,7 +1503,11 @@ Proof.
       as [τ [Hβτ Hγ1τ]].
     assert (Hprod_γ1 : producible_in tas γ1)
       by (eapply producible_after_single_step; eauto).
-Admitted.
+    destruct (IH Hprod_γ1 τ Hγ1τ) as [δ [Hτδ Hγδ]].
+    exists δ. split.
+    + eapply multi_step_trans; eauto.
+    + exact Hγδ.
+Qed.
 
 Theorem diamond_aux_inner :
   forall (tas : TAS) (α β γ : Assembly),
