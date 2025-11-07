@@ -873,6 +873,55 @@ Proof.
         simpl in Hmult. lia. }
   exact H.
 Qed.
+
+(** *** Semi-Decidability of Determinism (Bounded Check) *)
+
+(** A TAS is deterministic up to bound n if all producible assemblies
+    within the bound have unique attachments at each position *)
+Definition deterministic_up_to_bound (tas : TAS) (n : nat) : Prop :=
+  forall α p t1 t2,
+    bounded_assembly α n ->
+    producible_in tas α ->
+    tile_in_set t1 (tas_tiles tas) ->
+    tile_in_set t2 (tas_tiles tas) ->
+    can_attach (tas_glue_strength tas) t1 α p (tas_temp tas) ->
+    can_attach (tas_glue_strength tas) t2 α p (tas_temp tas) ->
+    t1 = t2.
+
+(** Helper: if a tile can attach, placing it produces a valid assembly *)
+Lemma can_attach_then_producible :
+  forall tas α t p,
+    producible_in tas α ->
+    tile_in_set t (tas_tiles tas) ->
+    can_attach (tas_glue_strength tas) t α p (tas_temp tas) ->
+    producible_in tas (place_tile α t p).
+Proof.
+  intros tas α t p Hprod Ht Hatt.
+  unfold producible_in in *.
+  eapply multi_step_trans.
+  - exact Hprod.
+  - apply single_to_multi.
+    unfold single_step.
+    exists t, p.
+    split; [exact Ht | split; [exact Hatt | reflexivity]].
+Qed.
+
+(** Helper: place_tile sets tile at position *)
+Lemma place_tile_at_pos :
+  forall α t p,
+    (place_tile α t p) p = Some t.
+Proof.
+  intros α t p.
+  unfold place_tile.
+  destruct (pos_eq p p) eqn:Heq.
+  - reflexivity.
+  - unfold pos_eq in Heq.
+    destruct p as [x y]. simpl in Heq.
+    assert (Hx: (x =? x)%Z = true) by apply Z.eqb_refl.
+    assert (Hy: (y =? y)%Z = true) by apply Z.eqb_refl.
+    rewrite Hx, Hy in Heq. simpl in Heq. discriminate.
+Qed.
+
 (** ** Examples for Section 1.2 *)
 
 Example seed_single : Assembly :=
@@ -958,12 +1007,6 @@ Lemma pos_eq_refl :
 Proof.
   intros [x y]. unfold pos_eq. simpl.
   rewrite Z.eqb_refl. rewrite Z.eqb_refl. reflexivity.
-Qed.
-
-Lemma place_tile_at_pos :
-  forall α t p, place_tile α t p p = Some t.
-Proof.
-  intros. unfold place_tile. rewrite pos_eq_refl. reflexivity.
 Qed.
 
 Lemma place_tile_neq_pos :
