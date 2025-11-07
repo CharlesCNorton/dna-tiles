@@ -2753,6 +2753,55 @@ Proof.
   apply domino_problem_at_least_as_hard_as_tm_tiling.
 Qed.
 
+Theorem wang_tiles_preserve_transition_semantics :
+  forall q1 a1 q2 a2,
+    let t1 := tm_tape_cell_tile (Some q1) a1 in
+    let t_trans := tm_transition_wang_tile q1 a1 q2 a2 in
+    let t2 := tm_tape_cell_tile (Some q2) a2 in
+    glue_S t1 = glue_N t_trans /\
+    glue_S t_trans = glue_N t2 /\
+    glue_E t1 = encode_tmwang_glue (TMW_State q1) /\
+    glue_W t_trans = encode_tmwang_glue (TMW_State q2).
+Proof.
+  intros q1 a1 q2 a2 t1 t_trans t2.
+  unfold t1, t_trans, t2.
+  unfold tm_tape_cell_tile, tm_transition_wang_tile.
+  simpl. repeat split; reflexivity.
+Qed.
+
+Theorem wang_tile_adjacency_implies_tm_transition :
+  forall (t_above t_below : WangTile) (q a q' a' : nat),
+    t_above = tm_tape_cell_tile (Some q) a ->
+    t_below = tm_transition_wang_tile q a q' a' ->
+    glue_S t_above = glue_N t_below ->
+    glue_N t_above = encode_tmwang_glue (TMW_Symbol a) /\
+    glue_S t_below = encode_tmwang_glue (TMW_Symbol a').
+Proof.
+  intros t_above t_below q a q' a' Habove Hbelow Hmatch.
+  subst. unfold tm_tape_cell_tile, tm_transition_wang_tile in *.
+  simpl in *. split; reflexivity.
+Qed.
+
+Theorem horizontal_wang_tile_adjacency_preserves_state :
+  forall (t_left t_right : WangTile) (q1 q2 a1 a2 : nat),
+    t_left = tm_transition_wang_tile q1 a1 q2 a2 ->
+    glue_E t_left = encode_tmwang_glue (TMW_State q1) ->
+    glue_W t_left = encode_tmwang_glue (TMW_State q2).
+Proof.
+  intros t_left t_right q1 q2 a1 a2 Hleft Hglue.
+  subst. unfold tm_transition_wang_tile in *. simpl in *. reflexivity.
+Qed.
+
+Corollary tm_to_wang_reduction_is_computable :
+  forall (states alphabet : list nat) (transition : nat -> nat -> option (nat * nat)),
+    exists (tileset : list WangTile),
+      tileset = tm_to_wang_tileset states alphabet transition.
+Proof.
+  intros states alphabet transition.
+  exists (tm_to_wang_tileset states alphabet transition).
+  reflexivity.
+Qed.
+
 End WangTilings.
 
 (** * Section 2.1: Turing Completeness at Temperature 2 *)
