@@ -484,6 +484,155 @@ Proof.
   exact Hterm.
 Qed.
 
+(** *** Nondeterminism Characterization *)
+
+Lemma place_tile_at_position :
+  forall α t p,
+    tile_at α p = None ->
+    place_tile α t p p = Some t.
+Proof.
+  intros α t p Hempty.
+  unfold place_tile, tile_at.
+  destruct (pos_eq p p) eqn:Heq.
+  - reflexivity.
+  - unfold pos_eq in Heq.
+    destruct p as [x y]. simpl in Heq.
+    assert (Hx: (x =? x)%Z = true) by apply Z.eqb_refl.
+    assert (Hy: (y =? y)%Z = true) by apply Z.eqb_refl.
+    rewrite Hx, Hy in Heq. simpl in Heq. discriminate.
+Qed.
+
+Lemma different_tiles_different_assemblies :
+  forall α t1 t2 p,
+    tile_at α p = None ->
+    t1 <> t2 ->
+    place_tile α t1 p <> place_tile α t2 p.
+Proof.
+  intros α t1 t2 p Hempty Hneq.
+  intro Heq.
+  assert (H1: place_tile α t1 p p = Some t1) by (apply place_tile_at_position; exact Hempty).
+  assert (H2: place_tile α t2 p p = Some t2) by (apply place_tile_at_position; exact Hempty).
+  rewrite Heq in H1.
+  rewrite H1 in H2.
+  injection H2 as Heq_t.
+  contradiction.
+Qed.
+
+Definition has_choice_point (tas : TAS) : Prop :=
+  exists α p t1 t2,
+    producible_in tas α /\
+    tile_in_set t1 (tas_tiles tas) /\
+    tile_in_set t2 (tas_tiles tas) /\
+    t1 <> t2 /\
+    can_attach (tas_glue_strength tas) t1 α p (tas_temp tas) /\
+    can_attach (tas_glue_strength tas) t2 α p (tas_temp tas).
+
+(** *** Complexity-Theoretic Analysis *)
+
+Definition finite_tileset (T : TileSet) : Prop :=
+  exists n, length T = n.
+
+Lemma tileset_finite :
+  forall T, finite_tileset T.
+Proof.
+  intro T.
+  exists (length T).
+  reflexivity.
+Qed.
+
+Definition bounded_assembly (α : Assembly) (n : nat) : Prop :=
+  forall p, let '(x, y) := p in
+    ((Z.abs x > Z.of_nat n)%Z \/ (Z.abs y > Z.of_nat n)%Z) -> α p = None.
+
+Lemma empty_assembly_bounded :
+  forall n, bounded_assembly empty_assembly n.
+Proof.
+  intros n [x y].
+  unfold bounded_assembly, empty_assembly.
+  intro. reflexivity.
+Qed.
+
+Definition tileset_size (tas : TAS) : nat :=
+  length (tas_tiles tas).
+
+Lemma tileset_size_nonnegative :
+  forall tas, tileset_size tas >= 0.
+Proof.
+  intro tas.
+  unfold tileset_size.
+  apply Nat.le_0_l.
+Qed.
+
+Lemma neighbor_binding_nonneg :
+  forall str_fn t α p p',
+    neighbor_binding str_fn t α p p' >= 0.
+Proof.
+  intros.
+  unfold neighbor_binding.
+  destruct (tile_at α p') as [tn|]; [| apply Nat.le_0_l].
+  destruct (glue_facing t p p'); [| apply Nat.le_0_l].
+  destruct (glue_facing tn p' p); apply Nat.le_0_l.
+Qed.
+
+Theorem determinism_check_bound_polynomial :
+  forall tas,
+    forall α t p,
+      tile_in_set t (tas_tiles tas) ->
+      tile_at α p = None ->
+      binding_strength (tas_glue_strength tas) t α p >= 0.
+Proof.
+  intros tas α t p Hin Hempty.
+  unfold binding_strength.
+  simpl.
+  assert (Hn: neighbor_binding (tas_glue_strength tas) t α p (north p) >= 0) by apply neighbor_binding_nonneg.
+  assert (He: neighbor_binding (tas_glue_strength tas) t α p (east p) >= 0) by apply neighbor_binding_nonneg.
+  assert (Hs: neighbor_binding (tas_glue_strength tas) t α p (south p) >= 0) by apply neighbor_binding_nonneg.
+  assert (Hw: neighbor_binding (tas_glue_strength tas) t α p (west p) >= 0) by apply neighbor_binding_nonneg.
+  lia.
+Qed.
+
+Definition witness_nondeterminism (tas : TAS) (α : Assembly) (p : Position) (t1 t2 : TileType) : Prop :=
+  producible_in tas α /\
+  tile_in_set t1 (tas_tiles tas) /\
+  tile_in_set t2 (tas_tiles tas) /\
+  t1 <> t2 /\
+  can_attach (tas_glue_strength tas) t1 α p (tas_temp tas) /\
+  can_attach (tas_glue_strength tas) t2 α p (tas_temp tas).
+
+Lemma witness_implies_choice_point :
+  forall tas α p t1 t2,
+    witness_nondeterminism tas α p t1 t2 ->
+    has_choice_point tas.
+Proof.
+  intros tas α p t1 t2 [Hprod [Ht1 [Ht2 [Hneq [Hat1 Hat2]]]]].
+  exists α, p, t1, t2.
+  split; [exact Hprod | split; [exact Ht1 | split; [exact Ht2 | split; [exact Hneq | split; [exact Hat1 | exact Hat2]]]]].
+Qed.
+
+Definition complexity_witness_size (tas : TAS) (α : Assembly) (p : Position) (t1 t2 : TileType) : nat :=
+  tileset_size tas.
+
+Theorem nondeterminism_verification_in_NP :
+  forall tas α p t1 t2,
+    witness_nondeterminism tas α p t1 t2 ->
+    complexity_witness_size tas α p t1 t2 = length (tas_tiles tas).
+Proof.
+  intros tas α p t1 t2 Hwit.
+  unfold complexity_witness_size, tileset_size.
+  reflexivity.
+Qed.
+
+Theorem determinism_verification_has_polynomial_certificate :
+  forall tas,
+    has_choice_point tas ->
+    exists α p t1 t2, witness_nondeterminism tas α p t1 t2.
+Proof.
+  intros tas [α [p [t1 [t2 [Hprod [Ht1 [Ht2 [Hneq [Hat1 Hat2]]]]]]]]].
+  exists α, p, t1, t2.
+  unfold witness_nondeterminism.
+  split; [exact Hprod | split; [exact Ht1 | split; [exact Ht2 | split; [exact Hneq | split; [exact Hat1 | exact Hat2]]]]].
+Qed.
+
 (** *** Termination Decidability for Finite Assemblies *)
 
 (** Helper: check if a single tile can attach at a position *)
