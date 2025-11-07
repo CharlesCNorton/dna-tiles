@@ -20,8 +20,6 @@ Require Import Coq.Logic.FunctionalExtensionality.
 Require Import Coq.Program.Wf.
 Import ListNotations.
 
-Section CoreDefinitions.
-
 (** ** Glue Types *)
 
 Definition GlueType : Type := nat.
@@ -205,11 +203,7 @@ Proof.
   unfold glue_1, glue_2. discriminate.
 Qed.
 
-End CoreDefinitions.
-
 (** * Section 1.2: Assembly Dynamics *)
-
-Section AssemblyDynamics.
 
 (** ** Binding Strength *)
 
@@ -448,11 +442,7 @@ Proof.
   apply empty_subassembly.
 Qed.
 
-End AssemblyDynamics.
-
 (** * Section 1.3: Determinism and Uniqueness *)
-
-Section Determinism.
 
 (** ** Local Determinism Conditions *)
 
@@ -1670,11 +1660,7 @@ Proof.
   apply subassembly_refl.
 Qed.
 
-End Determinism.
-
 (** * Section 1.4: Wang Tilings Connection *)
-
-Section WangTilings.
 
 (** ** Wang Tiles *)
 
@@ -2817,8 +2803,6 @@ Definition wang_tiling_reaches_halting (W : WangTiling) (accept_state reject_sta
       (glue_E t = encode_tmwang_glue (TMW_State accept_state) \/
        glue_E t = encode_tmwang_glue (TMW_State reject_state)).
 
-End WangTilings.
-
 (** * Section 2.1: Turing Completeness at Temperature 2 *)
 
 Section TuringCompleteness.
@@ -3173,6 +3157,7 @@ Context {State : Type}.
 Context {State_eq_dec : forall (q1 q2 : State), {q1 = q2} + {q1 <> q2}}.
 Context {TapeSymbol : Type}.
 Context {TapeSymbol_eq_dec : forall (a b : TapeSymbol), {a = b} + {a <> b}}.
+Context (blank : TapeSymbol).
 
 Inductive SimGlue : Type :=
   | GlueNull : SimGlue
@@ -3270,8 +3255,6 @@ Definition encode_cell_to_tile (c : TMCell) : SimTile :=
   | None => mkSimTile GlueNull (GlueTapeSymbol (cell_symbol c)) GlueNull (GlueTapeSymbol (cell_symbol c))
   | Some q => mkSimTile (GlueState q) (GlueTapeSymbol (cell_symbol c)) (GlueState q) (GlueTapeSymbol (cell_symbol c))
   end.
-
-Context (blank : TapeSymbol).
 
 Definition config_to_row (cfg : @Config State TapeSymbol) (y : Z) : Z -> TMCell :=
   fun x => mkTMCell
@@ -3875,8 +3858,6 @@ Qed.
 
 End TMSimulation.
 
-Section TuringCompletenessExamples.
-
 Example ex_incrementer_has_states :
   length (ConcreteTM.tm_states ConcreteTM.incrementer) = 2.
 Proof.
@@ -4232,11 +4213,7 @@ Proof.
   exists t. split. exact Hin. exact Hglue.
 Qed.
 
-End TuringCompletenessExamples.
-
 (** * Section 2.2: Intrinsic Universality *)
-
-Section IntrinsicUniversality.
 
 (** ** Supertiles and Block Representations *)
 
@@ -5228,11 +5205,7 @@ Proof.
   split; [reflexivity | apply producible_assembly_simulatable; trivial].
 Qed.
 
-End IntrinsicUniversality.
-
 (** * Undecidability Results *)
-
-Section Undecidability.
 
 Definition halting_decidable : Prop :=
   exists (decider : ConcreteTM.TuringMachine -> list nat -> bool),
@@ -5833,11 +5806,7 @@ Proof.
   exact Hhalting.
 Qed.
 
-End Undecidability.
-
 (** * Section 2.3: Temperature 1 Limitations *)
-
-Section Temperature1Limitations.
 
 Definition is_temp1 (tas : TAS) : Prop :=
   tas_temp tas = 1.
@@ -6262,10 +6231,6 @@ Proof.
         rewrite encode_staged_tm_length. apply Nat.le_0_l.
 Qed.
 
-End Temperature1Limitations.
-
-Section IntegratedExamples.
-
 Theorem tm_states_constructible_for_temp2_tas :
   forall (M : ConcreteTM.TuringMachine),
     length (ConcreteTM.tm_states M) > 0 ->
@@ -6329,5 +6294,3 @@ Proof.
     + simpl. apply Nat.lt_0_succ.
     + apply staged_assembly_length.
 Qed.
-
-End IntegratedExamples.
