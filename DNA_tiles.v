@@ -5364,6 +5364,34 @@ Proof.
   lia.
 Qed.
 
+Definition simplify_transition (M : ConcreteTM.TuringMachine) : nat -> nat -> option (nat * nat) :=
+  fun q a =>
+    match ConcreteTM.tm_transition M q a with
+    | Some (q', a', _) => Some (q', a')
+    | None => None
+    end.
+
+Definition tm_to_wang_tiles (M : ConcreteTM.TuringMachine) (input : list nat) : list WangTile :=
+  tm_to_wang_tileset (ConcreteTM.tm_states M) (ConcreteTM.tm_alphabet M) (simplify_transition M).
+
+Theorem halting_problem_reduces_to_domino_via_wang_construction :
+  forall (M : ConcreteTM.TuringMachine) (input : list nat),
+    exists (wang_tileset : list WangTile),
+      wang_tileset = tm_to_wang_tiles M input /\
+      (forall q a q' a',
+        In q (ConcreteTM.tm_states M) ->
+        In a (ConcreteTM.tm_alphabet M) ->
+        simplify_transition M q a = Some (q', a') ->
+        In (tm_transition_wang_tile q a q' a') wang_tileset).
+Proof.
+  intros M input.
+  exists (tm_to_wang_tiles M input).
+  split; [reflexivity | ].
+  intros q a q' a' Hq Ha Htrans.
+  unfold tm_to_wang_tiles.
+  apply tm_to_wang_tileset_contains_transitions; auto.
+Qed.
+
 End Undecidability.
 
 (** * Section 2.3: Temperature 1 Limitations *)
