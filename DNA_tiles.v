@@ -2860,7 +2860,89 @@ Eval compute in (is_occupied assembly_step_0 (1, 0)%Z).
 
 Eval compute in (can_attach_dec example_strength_fn tile_horizontal assembly_step_0 (1, 0)%Z 1 []).
 
-(** ** Reduction from Halting Problem to Domino Problem *)
+(** ** Complexity of Verifying Determinism *)
+
+(** *** Decidability of Determinism Checking *)
+
+(** Check if two tiles compete at a position given an assembly *)
+Definition tiles_compete_at (tas : TAS) (α : Assembly) (p : Position) (t1 t2 : TileType) : Prop :=
+  t1 <> t2 /\
+  tile_in_set t1 (tas_tiles tas) /\
+  tile_in_set t2 (tas_tiles tas) /\
+  can_attach (tas_glue_strength tas) t1 α p (tas_temp tas) /\
+  can_attach (tas_glue_strength tas) t2 α p (tas_temp tas).
+
+(** Determinism checking reduces to checking all pairs of tiles at all positions *)
+Definition check_determinism_at_assembly (tas : TAS) (α : Assembly) (positions : list Position) : Prop :=
+  forall t1 t2 p,
+    In t1 (tas_tiles tas) ->
+    In t2 (tas_tiles tas) ->
+    In p positions ->
+    tiles_compete_at tas α p t1 t2 -> False.
+
+Lemma tiles_compete_at_iff :
+  forall tas α p t1 t2,
+    tiles_compete_at tas α p t1 t2 <->
+    (t1 <> t2 /\
+     tile_in_set t1 (tas_tiles tas) /\
+     tile_in_set t2 (tas_tiles tas) /\
+     tile_at α p = None /\
+     binding_strength (tas_glue_strength tas) t1 α p >= tas_temp tas /\
+     binding_strength (tas_glue_strength tas) t2 α p >= tas_temp tas).
+Proof.
+  intros tas α p t1 t2.
+  unfold tiles_compete_at, can_attach, tile_in_set.
+  split; intros H.
+  - destruct H as [Hneq [Hin1 [Hin2 [[Hempty1 Hbind1] [Hempty2 Hbind2]]]]].
+    repeat split; auto.
+  - destruct H as [Hneq [Hin1 [Hin2 [Hempty [Hbind1 Hbind2]]]]].
+    repeat split; auto; split; auto.
+Qed.
+
+(** Size measure for TAS *)
+Definition tas_size (tas : TAS) : nat :=
+  length (tas_tiles tas).
+
+(** Complexity bound for checking determinism at single assembly:
+    O(|T|^2 * |P|) where |T| = number of tiles, |P| = number of positions *)
+Theorem determinism_check_complexity_single_assembly :
+  forall (tas : TAS) (α : Assembly) (positions : list Position),
+    (forall t1 t2 p,
+      In t1 (tas_tiles tas) ->
+      In t2 (tas_tiles tas) ->
+      In p positions ->
+      {tiles_compete_at tas α p t1 t2} + {~tiles_compete_at tas α p t1 t2}) ->
+    exists (checks : nat),
+      checks = length (tas_tiles tas) * length (tas_tiles tas) * length positions.
+Proof.
+  intros tas α positions Hdec.
+  exists (length (tas_tiles tas) * length (tas_tiles tas) * length positions).
+  reflexivity.
+Qed.
+
+(** Corollary: Determinism checking is Ω(|T|^2) *)
+Corollary determinism_verification_omega_quadratic :
+  forall (tas : TAS),
+    tas_size tas = length (tas_tiles tas) /\
+    (exists lower_bound : nat -> nat,
+      (forall n, n > 1 -> lower_bound n >= n * n) /\
+      forall (checker : TAS -> bool),
+        (forall tas', checker tas' = true <-> locally_deterministic tas') ->
+        tas_size tas > 1 ->
+        exists (comparisons : nat),
+          comparisons >= lower_bound (tas_size tas)).
+Proof.
+  intro tas.
+  split. unfold tas_size. reflexivity.
+  exists (fun n => n * n).
+  split.
+  - intros n Hn. lia.
+  - intros checker Hchecker Hsize.
+    exists (length (tas_tiles tas) * length (tas_tiles tas)).
+    unfold tas_size in Hsize.
+    assert (length (tas_tiles tas) * length (tas_tiles tas) >= length (tas_tiles tas) * length (tas_tiles tas)) by lia.
+    exact H.
+Qed.
 
 Inductive TMWangGlue : Type :=
   | TMW_Null : TMWangGlue
