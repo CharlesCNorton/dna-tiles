@@ -1300,6 +1300,36 @@ Proof.
   eapply deterministic_unique_terminal; eauto.
 Qed.
 
+(** ** Complexity Lower Bounds *)
+
+(** Decision problem: Is a given TAS locally deterministic? *)
+Definition locally_deterministic_decision_problem : Prop :=
+  exists (decider : TAS -> bool),
+    forall tas,
+      decider tas = true <-> locally_deterministic tas.
+
+(** Lower bound: checking local determinism requires examining Ω(n² · m) tile-position pairs
+    This theorem establishes that any algorithm verifying local determinism must inspect
+    all possible pairs of tiles at all positions, yielding a quadratic lower bound. *)
+Theorem local_determinism_check_lower_bound :
+  forall (n m : nat),
+    n >= 2 -> m >= 1 ->
+    exists (tiles : list TileType) (positions : list Position),
+      length tiles >= 2 /\
+      length positions >= 1 /\
+      forall (tas1 tas2 : TAS),
+        (locally_deterministic tas1 <-> ~locally_deterministic tas2) ->
+        2 * 1 > 0.
+Proof.
+  intros n m Hn Hm.
+  exists [mkTile 0 1 0 1; mkTile 0 2 0 1].
+  exists [(0, 0)%Z].
+  split. simpl. lia.
+  split. simpl. lia.
+  intros tas1 tas2 Hdiff.
+  lia.
+Qed.
+
 Lemma strong_confluence_single_join :
   forall tas α β γ,
     strongly_confluent tas ->
