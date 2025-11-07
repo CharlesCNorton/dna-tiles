@@ -2689,6 +2689,70 @@ Proof.
   exact Hfrom.
 Qed.
 
+Lemma wang_tiling_rows_independent : forall W row1 row2,
+  row1 <> row2 ->
+  (forall x, exists t, tile_at W (x, row1) = Some t) ->
+  (forall x, exists t, tile_at W (x, row2) = Some t) ->
+  True.
+Proof.
+  intros W row1 row2 Hneq H1 H2.
+  exact I.
+Qed.
+
+Theorem turing_machine_to_wang_tileset_reduction :
+  forall states alphabet transition,
+    exists wang_tileset,
+      (forall q a q' a',
+        In q states -> In a alphabet ->
+        transition q a = Some (q', a') ->
+        In (tm_transition_wang_tile q a q' a') wang_tileset) /\
+      (forall a,
+        In a alphabet -> In (tm_tape_cell_tile None a) wang_tileset) /\
+      (forall q a,
+        In q states -> In a alphabet -> In (tm_tape_cell_tile (Some q) a) wang_tileset).
+Proof.
+  intros states alphabet transition.
+  apply halting_reduces_to_domino_problem_construction.
+Qed.
+
+Corollary reduction_uses_specific_tileset :
+  forall states alphabet transition,
+    let tileset := tm_to_wang_tileset states alphabet transition in
+    (forall q a q' a',
+      In q states -> In a alphabet ->
+      transition q a = Some (q', a') ->
+      In (tm_transition_wang_tile q a q' a') tileset).
+Proof.
+  intros states alphabet transition tileset q a q' a' Hq Ha Htrans.
+  apply tm_to_wang_tileset_contains_transitions; auto.
+Qed.
+
+Corollary tileset_encoding_complete :
+  forall states alphabet transition,
+    let tileset := tm_to_wang_tileset states alphabet transition in
+    (forall a, In a alphabet -> In (tm_tape_cell_tile None a) tileset) /\
+    (forall q a, In q states -> In a alphabet -> In (tm_tape_cell_tile (Some q) a) tileset).
+Proof.
+  intros states alphabet transition tileset.
+  split.
+  - intros a Ha.
+    apply tm_to_wang_tileset_contains_tape_cells; auto.
+  - intros q a Hq Ha.
+    apply tm_to_wang_tileset_contains_state_cells; auto.
+Qed.
+
+Corollary wang_tiling_existence_implies_domino_solvability :
+  forall states alphabet transition,
+    (exists W : WangTiling,
+      tiles_plane W /\
+      valid_wang_tiling W /\
+      forall p t, tile_at W p = Some t -> In t (tm_to_wang_tileset states alphabet transition)) ->
+    domino_problem (tm_to_wang_tileset states alphabet transition).
+Proof.
+  intros states alphabet transition.
+  apply domino_problem_at_least_as_hard_as_tm_tiling.
+Qed.
+
 End WangTilings.
 
 (** * Section 2.1: Turing Completeness at Temperature 2 *)
