@@ -6378,39 +6378,6 @@ Proof.
       simpl. constructor.
 Qed.
 
-Lemma binding_preservation_at_temp_2 :
-  forall (S : TAS) (t : TileType) (β : Assembly) (p : Position) (k : nat),
-    tas_temp S = 2 ->
-    (forall g1 g2, g1 <> null_glue -> g2 <> null_glue -> g1 = g2 -> tas_glue_strength S g1 = 1) ->
-    k > 0 ->
-    binding_strength (tas_glue_strength S) t β p >= 2 ->
-    binding_strength univ_glue_strength
-      (univtile_to_tiletype
-        (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
-                    (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)))
-      (lift_assembly β k) p >= 2.
-Proof.
-Admitted.
-
-(** Theorem: If β →₁ β' in S, then there exists α' such that α →* α' in U and α' simulates β' *)
-Theorem simulation_preserves_single_step :
-  forall (S : TAS) (β β' : Assembly) (params : SimulationParams),
-    tas_temp S = 2 ->
-    (forall p' t', tas_seed S p' = Some t' -> tile_in_set t' (tas_tiles S)) ->
-    single_step (tas_glue_strength S) (tas_tiles S) (tas_temp S) β β' ->
-    let k := sim_scale params in
-    let U_tiles := universal_tileset (tas_tiles S) k in
-    let U := mkTAS U_tiles univ_glue_strength empty_assembly 2 in
-    let α := lift_assembly β k in
-    forall (Hk : k <> 0),
-      params = mk_sim_params k Hk ->
-      simulates_assembly params U S α β ->
-      exists α',
-        multi_step univ_glue_strength U_tiles 2 α α' /\
-        simulates_assembly params U S α' β'.
-Proof.
-Admitted.
-
 (** * Undecidability Results *)
 
 Definition halting_decidable : Prop :=
