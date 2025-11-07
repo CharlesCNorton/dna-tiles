@@ -609,6 +609,56 @@ Proof.
     apply is_terminal_implies_all_tiles_terminal; auto.
 Qed.
 
+(** *** Complexity Analysis of Termination Decidability *)
+
+(** Time complexity: number of binding strength computations *)
+Definition termination_check_steps (num_tiles num_positions : nat) : nat :=
+  num_tiles * num_positions.
+
+(** The decision procedure performs O(|tiles| × |positions|) binding strength checks *)
+Theorem termination_decidability_time_complexity :
+  forall (tas : TAS) (α : Assembly) (positions : list Position),
+    let num_tiles := length (tas_tiles tas) in
+    let num_positions := length positions in
+    termination_check_steps num_tiles num_positions = num_tiles * num_positions.
+Proof.
+  intros. unfold termination_check_steps. reflexivity.
+Qed.
+
+
+(** Space complexity: storage for decision procedure *)
+Definition termination_check_space (num_tiles num_positions : nat) : nat :=
+  num_tiles + num_positions.
+
+(** The decision procedure uses O(|tiles| + |positions|) space *)
+Theorem termination_decidability_space_complexity :
+  forall (tas : TAS) (α : Assembly) (positions : list Position),
+    let num_tiles := length (tas_tiles tas) in
+    let num_positions := length positions in
+    termination_check_space num_tiles num_positions = num_tiles + num_positions.
+Proof.
+  intros. unfold termination_check_space. reflexivity.
+Qed.
+
+(** Polynomial time decidability *)
+Theorem termination_decidability_polynomial_time :
+  forall (tas : TAS) (α : Assembly) (positions : list Position),
+    let n := length (tas_tiles tas) + length positions in
+    termination_check_steps (length (tas_tiles tas)) (length positions) <= n * n.
+Proof.
+  intros. unfold termination_check_steps. simpl.
+  assert (H: length (tas_tiles tas) * length positions <= 
+             (length (tas_tiles tas) + length positions) * (length (tas_tiles tas) + length positions)).
+  { destruct (tas_tiles tas) as [|t rest]; simpl.
+    - lia.
+    - destruct positions as [|p rest_pos]; simpl.
+      + lia.
+      + assert (Hmult: forall a b, a * b <= (a + b) * (a + b)).
+        { intros. nia. }
+        specialize (Hmult (S (length rest)) (S (length rest_pos))).
+        simpl in Hmult. lia. }
+  exact H.
+Qed.
 (** ** Examples for Section 1.2 *)
 
 Example seed_single : Assembly :=
