@@ -419,6 +419,196 @@ Proof.
   rewrite (Huniq α Hα). rewrite (Huniq β Hβ). reflexivity.
 Qed.
 
+(** *** Termination Decidability for Finite Assemblies *)
+
+(** Helper: check if a single tile can attach at a position *)
+Definition can_tile_attach (tas : TAS) (α : Assembly) (t : TileType) (p : Position) : bool :=
+  match α p with
+  | Some _ => false
+  | None => Nat.leb (tas_temp tas) (binding_strength (tas_glue_strength tas) t α p)
+  end.
+
+(** Helper lemma: can_tile_attach reflects can_attach *)
+Lemma can_tile_attach_spec :
+  forall tas α t p,
+    tile_in_set t (tas_tiles tas) ->
+    can_tile_attach tas α t p = true <-> can_attach (tas_glue_strength tas) t α p (tas_temp tas).
+Proof.
+  intros tas α t p Hin.
+  unfold can_tile_attach, can_attach.
+  destruct (α p) eqn:Hα.
+  - split; intro H.
+    + discriminate.
+    + destruct H as [Hempty _].
+      unfold tile_at in Hempty. rewrite Hα in Hempty. discriminate.
+  - split; intro H.
+    + apply Nat.leb_le in H.
+      split.
+      * unfold tile_at. rewrite Hα. reflexivity.
+      * exact H.
+    + destruct H as [_ Hbound].
+      apply Nat.leb_le. exact Hbound.
+Qed.
+
+(** *** Termination Decidability *)
+
+(** Helper lemma: binding strength comparison is decidable *)
+Lemma binding_strength_lt_dec :
+  forall (strength_fn : GlueType -> nat) (t : TileType) (α : Assembly) (p : Position) (τ : nat),
+    {binding_strength strength_fn t α p < τ} + {binding_strength strength_fn t α p >= τ}.
+Proof.
+  intros strength_fn t α p τ.
+  destruct (Nat.ltb (binding_strength strength_fn t α p) τ) eqn:Hltb.
+  - left. apply Nat.ltb_lt. exact Hltb.
+  - right. apply Nat.ltb_ge. exact Hltb.
+Qed.
+
+(** Helper lemma: whether a tile satisfies terminal condition at a position *)
+Lemma terminal_condition_at_pos_dec :
+  forall (tas : TAS) (α : Assembly) (t : TileType) (p : Position),
+    tile_in_set t (tas_tiles tas) ->
+    tile_at α p = None ->
+    {binding_strength (tas_glue_strength tas) t α p < tas_temp tas} +
+    {binding_strength (tas_glue_strength tas) t α p >= tas_temp tas}.
+Proof.
+  intros tas α t p Hin Hempty.
+  apply binding_strength_lt_dec.
+Qed.
+(** Check all empty positions in a list satisfy terminal condition for one tile *)
+Fixpoint all_positions_terminal_for_tile
+  (tas : TAS) (α : Assembly) (t : TileType) (positions : list Position) : Prop :=
+  match positions with
+  | [] => True
+  | p :: rest =>
+      (tile_at α p = None -> binding_strength (tas_glue_strength tas) t α p < tas_temp tas) /\
+      all_positions_terminal_for_tile tas α t rest
+  end.
+
+(** Decidability for checking all positions for one tile *)
+Lemma all_positions_terminal_for_tile_dec :
+  forall (tas : TAS) (α : Assembly) (t : TileType) (positions : list Position),
+    tile_in_set t (tas_tiles tas) ->
+    {all_positions_terminal_for_tile tas α t positions} +
+    {~ all_positions_terminal_for_tile tas α t positions}.
+Proof.
+  intros tas α t positions Hin.
+  induction positions as [|p rest IH].
+  - left. simpl. exact I.
+  - simpl.
+    destruct (tile_at α p) eqn:Hoccupied.
+    + destruct IH as [IH_yes | IH_no].
+      * left. split; auto. intro H. discriminate.
+      * right. intro H. destruct H as [_ H]. contradiction.
+    + destruct (binding_strength_lt_dec (tas_glue_strength tas) t α p (tas_temp tas)) as [Hlt | Hge].
+      * destruct IH as [IH_yes | IH_no].
+        { left. split; auto. }
+        { right. intro H. destruct H as [_ H]. contradiction. }
+      * right. intro H. destruct H as [H _].
+        specialize (H eq_refl). lia.
+Qed.
+
+(** Check all tiles in a list satisfy terminal condition for all positions *)
+Fixpoint all_tiles_terminal
+  (tas : TAS) (α : Assembly) (tiles : list TileType) (positions : list Position) : Prop :=
+  match tiles with
+  | [] => True
+  | t :: rest =>
+      all_positions_terminal_for_tile tas α t positions /\
+      all_tiles_terminal tas α rest positions
+  end.
+
+(** Decidability for all tiles and positions *)
+Lemma all_tiles_terminal_dec :
+  forall (tas : TAS) (α : Assembly) (tiles : list TileType) (positions : list Position),
+    (forall t, In t tiles -> tile_in_set t (tas_tiles tas)) ->
+    {all_tiles_terminal tas α tiles positions} +
+    {~ all_tiles_terminal tas α tiles positions}.
+Proof.
+  intros tas α tiles positions Htiles_valid.
+  induction tiles as [|t rest IH].
+  - left. simpl. exact I.
+  - simpl.
+    assert (Ht_valid: tile_in_set t (tas_tiles tas)).
+    { apply Htiles_valid. left. reflexivity. }
+    destruct (all_positions_terminal_for_tile_dec tas α t positions Ht_valid) as [Hyes | Hno].
+    + assert (Htiles_valid': forall t0, In t0 rest -> tile_in_set t0 (tas_tiles tas)).
+      { intros t0 Hin. apply Htiles_valid. right. exact Hin. }
+      destruct (IH Htiles_valid') as [IH_yes | IH_no].
+      * left. split; auto.
+      * right. intro H. destruct H as [_ H]. contradiction.
+    + right. intro H. destruct H as [H _]. contradiction.
+Qed.
+
+(** Decidability result for termination checking over a finite set of positions *)
+Theorem all_positions_terminal_decidable :
+  forall (tas : TAS) (α : Assembly) (positions : list Position),
+    (forall t, In t (tas_tiles tas) -> tile_in_set t (tas_tiles tas)) ->
+    {all_tiles_terminal tas α (tas_tiles tas) positions} +
+    {~ all_tiles_terminal tas α (tas_tiles tas) positions}.
+Proof.
+  intros tas α positions Htiles_valid.
+  apply all_tiles_terminal_dec. exact Htiles_valid.
+Qed.
+
+(** Helper: is_terminal implies all_tiles_terminal *)
+Lemma is_terminal_implies_all_tiles_terminal :
+  forall (tas : TAS) (α : Assembly) (tiles : list TileType) (positions : list Position),
+    is_terminal tas α ->
+    (forall t, In t tiles -> tile_in_set t (tas_tiles tas)) ->
+    all_tiles_terminal tas α tiles positions.
+Proof.
+  intros tas α tiles positions Hterm Htiles_in.
+  induction tiles as [|t rest IH].
+  - simpl. exact I.
+  - simpl. split.
+    + clear IH. induction positions as [|pos rest_pos IHpos].
+      * simpl. exact I.
+      * simpl. split.
+        -- intro Hempty. apply Hterm. apply Htiles_in. left. reflexivity. exact Hempty.
+        -- apply IHpos.
+    + apply IH. intros t0 Hin. apply Htiles_in. right. exact Hin.
+Qed.
+
+(** Stronger theorem: termination is decidable for finite assemblies *)
+Theorem is_terminal_decidable_for_finite_assemblies :
+  forall (tas : TAS) (α : Assembly) (positions : list Position),
+    (forall p, tile_at α p = None ->
+      (exists t, tile_in_set t (tas_tiles tas) /\
+         binding_strength (tas_glue_strength tas) t α p >= tas_temp tas) ->
+      In p positions) ->
+    (forall t, In t (tas_tiles tas) -> tile_in_set t (tas_tiles tas)) ->
+    {is_terminal tas α} + {~ is_terminal tas α}.
+Proof.
+  intros tas α positions Hcomplete Htiles_valid.
+  destruct (all_tiles_terminal_dec tas α (tas_tiles tas) positions Htiles_valid) as [Hyes | Hno].
+  - left. unfold is_terminal. intros t p Hin Hempty.
+    induction (tas_tiles tas) as [|t0 rest IH].
+    + simpl in Hin. contradiction.
+    + simpl in Hyes. destruct Hyes as [Hyes_t0 Hyes_rest].
+      destruct Hin as [Heq | Hin'].
+      * subst t0. clear IH Hyes_rest.
+        destruct (binding_strength_lt_dec (tas_glue_strength tas) t α p (tas_temp tas)) as [Hlt | Hge].
+        { exact Hlt. }
+        { assert (Hin_p: In p positions).
+          { apply Hcomplete. exact Hempty. exists t. split; auto. left. reflexivity. }
+          clear Hcomplete Hge.
+          induction positions as [|pos rest_pos IHpos].
+          - simpl in Hin_p. contradiction.
+          - simpl in Hyes_t0. destruct Hyes_t0 as [Hpos Hrest].
+            destruct Hin_p as [Heq | Hin'].
+            + subst pos. apply Hpos. exact Hempty.
+            + apply IHpos. exact Hrest. exact Hin'. }
+      * apply (IH (fun p' Hempty' ex_t => Hcomplete p' Hempty' match ex_t with
+                                                                | ex_intro _ t' (conj Hin_t' Hge') =>
+                                                                    ex_intro _ t' (conj (or_intror Hin_t') Hge')
+                                                                end)
+                   (fun t' Hin_t' => Hin_t')
+                   Hyes_rest
+                   Hin').
+  - right. intro Hterm. apply Hno. clear Hno.
+    apply is_terminal_implies_all_tiles_terminal; auto.
+Qed.
+
 (** ** Examples for Section 1.2 *)
 
 Example seed_single : Assembly :=
