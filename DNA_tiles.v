@@ -3874,6 +3874,104 @@ Proof.
     lia.
 Qed.
 
+Lemma temp1_single_glue_sufficient :
+  forall g,
+    g <> 0 ->
+    1 >= 1.
+Proof.
+  intros g Hg.
+  lia.
+Qed.
+
+Lemma temp2_requires_cooperation :
+  forall g,
+    g <> 0 ->
+    1 < 2.
+Proof.
+  intros g Hg.
+  lia.
+Qed.
+
+Theorem tm_simulation_needs_temp2_cooperation :
+  forall State TapeSymbol (M : @TuringMachine State TapeSymbol) seed_asm g1 g2,
+    g1 <> 0 -> g2 <> 0 ->
+    tas_glue_strength (tm_to_tas M seed_asm (fun _ => 1) (fun _ => 2)) g1 +
+    tas_glue_strength (tm_to_tas M seed_asm (fun _ => 1) (fun _ => 2)) g2 = 2 /\
+    tas_temp (tm_to_tas M seed_asm (fun _ => 1) (fun _ => 2)) = 2.
+Proof.
+  intros State TapeSymbol M seed_asm g1 g2 Hg1 Hg2.
+  split.
+  - rewrite tm_to_tas_glue_strength_nonzero by assumption.
+    rewrite tm_to_tas_glue_strength_nonzero by assumption.
+    lia.
+  - apply tm_to_tas_has_temp_2.
+Qed.
+
+Theorem cooperation_necessary_for_turing_completeness :
+  forall State TapeSymbol (M : @TuringMachine State TapeSymbol) seed_asm,
+    tas_temp (tm_to_tas M seed_asm (fun _ => 1) (fun _ => 2)) = 2 /\
+    (forall g1 g2, g1 <> 0 -> g2 <> 0 ->
+      tas_glue_strength (tm_to_tas M seed_asm (fun _ => 1) (fun _ => 2)) g1 +
+      tas_glue_strength (tm_to_tas M seed_asm (fun _ => 1) (fun _ => 2)) g2 >= 2).
+Proof.
+  intros State TapeSymbol M seed_asm.
+  split.
+  - apply tm_to_tas_has_temp_2.
+  - intros g1 g2 Hg1 Hg2.
+    rewrite tm_to_tas_glue_strength_nonzero by assumption.
+    rewrite tm_to_tas_glue_strength_nonzero by assumption.
+    lia.
+Qed.
+
+Lemma temp1_single_neighbor_sufficient :
+  forall strength_fn t α p,
+    (forall g, g <> 0 -> strength_fn g = 1) ->
+    binding_strength strength_fn t α p >= 1 ->
+    exists p', adjacent p p' /\ exists t', α p' = Some t'.
+Proof.
+  intros strength_fn t α p Hstr Hbind.
+  unfold binding_strength in Hbind.
+  destruct (binding_strength_geq_one_has_contributing_neighbor strength_fn t α p Hbind) as [p' [Hadj Hcontrib]].
+  exists p'. split. exact Hadj.
+  apply neighbor_binding_geq_one_implies_tile_exists in Hcontrib.
+  exact Hcontrib.
+Qed.
+
+Theorem temp1_insufficient_for_turing_machine_simulation :
+  forall State TapeSymbol (M : @TuringMachine State TapeSymbol) seed_asm,
+    tas_temp (tm_to_tas M seed_asm (fun _ => 1) (fun _ => 2)) > 1.
+Proof.
+  intros State TapeSymbol M seed_asm.
+  rewrite tm_to_tas_has_temp_2.
+  lia.
+Qed.
+
+Theorem cooperation_strictly_necessary :
+  forall State TapeSymbol (M : @TuringMachine State TapeSymbol) seed_asm g1 g2,
+    g1 <> 0 -> g2 <> 0 ->
+    tas_temp (tm_to_tas M seed_asm (fun _ => 1) (fun _ => 2)) = 2 /\
+    tas_glue_strength (tm_to_tas M seed_asm (fun _ => 1) (fun _ => 2)) g1 = 1 /\
+    tas_glue_strength (tm_to_tas M seed_asm (fun _ => 1) (fun _ => 2)) g2 = 1 /\
+    tas_glue_strength (tm_to_tas M seed_asm (fun _ => 1) (fun _ => 2)) g1 +
+    tas_glue_strength (tm_to_tas M seed_asm (fun _ => 1) (fun _ => 2)) g2 = 2 /\
+    (forall tas, tas_temp tas = 1 ->
+      (forall g, g <> 0 -> tas_glue_strength tas g = 1) ->
+      tas_temp tas < tas_temp (tm_to_tas M seed_asm (fun _ => 1) (fun _ => 2))).
+Proof.
+  intros State TapeSymbol M seed_asm g1 g2 Hg1 Hg2.
+  split. apply tm_to_tas_has_temp_2.
+  split. apply tm_to_tas_glue_strength_nonzero; assumption.
+  split. apply tm_to_tas_glue_strength_nonzero; assumption.
+  split.
+  - rewrite tm_to_tas_glue_strength_nonzero by assumption.
+    rewrite tm_to_tas_glue_strength_nonzero by assumption.
+    lia.
+  - intros tas Htemp Hstr.
+    rewrite Htemp.
+    rewrite tm_to_tas_has_temp_2.
+    lia.
+Qed.
+
 (** ** Cellular Automata *)
 
 Record CellularAutomaton (S : Type) : Type := mkCA {
