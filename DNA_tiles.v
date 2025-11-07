@@ -6901,9 +6901,56 @@ Proof.
   - exact Htrans.
 Qed.
 
+(** Helper: construct tile from configuration at position *)
+Definition tile_from_config (cfg : ConcreteTM.Config) (pos : Z) : WangTile :=
+  let state := if (pos =? ConcreteTM.cfg_pos cfg)%Z
+               then Some (ConcreteTM.cfg_state cfg)
+               else None in
+  let symbol := ConcreteTM.cfg_tape cfg pos in
+  tm_tape_cell_tile state symbol.
+
+(** Helper: tile from config at head position is in tileset *)
+Lemma tile_from_config_head_in_tileset :
+  forall M n y cfg x,
+    (0 <= y < Z.of_nat n)%Z ->
+    ConcreteTM.steps M (Z.to_nat y) (ConcreteTM.init_config M []) = Some cfg ->
+    x = ConcreteTM.cfg_pos cfg ->
+    (forall i c, i <= n -> ConcreteTM.steps M i (ConcreteTM.init_config M []) = Some c ->
+      In (ConcreteTM.cfg_state c) (ConcreteTM.tm_states M)) ->
+    (forall i c, i <= n -> ConcreteTM.steps M i (ConcreteTM.init_config M []) = Some c ->
+      forall pos, In (ConcreteTM.cfg_tape c pos) (ConcreteTM.tm_alphabet M)) ->
+    In (tm_tape_cell_tile (Some (ConcreteTM.cfg_state cfg)) (ConcreteTM.cfg_tape cfg x))
+       (tm_to_wang_tileset (ConcreteTM.tm_states M) (ConcreteTM.tm_alphabet M) (simplify_transition M)).
+Proof.
+  intros M n y cfg x Hy Hcfg Hx Hstates_wf Halphabet_wf; subst.
+  apply tm_to_wang_tileset_contains_state_cells.
+  - apply (Hstates_wf (Z.to_nat y) cfg); [lia | exact Hcfg].
+  - apply (Halphabet_wf (Z.to_nat y) cfg); [lia | exact Hcfg].
+Qed.
+
+(** Helper: tile from config at non-head position is in tileset *)
+Lemma tile_from_config_nonhead_in_tileset :
+  forall M n y cfg x,
+    (0 <= y < Z.of_nat n)%Z ->
+    ConcreteTM.steps M (Z.to_nat y) (ConcreteTM.init_config M []) = Some cfg ->
+    x <> ConcreteTM.cfg_pos cfg ->
+    (forall i c, i <= n -> ConcreteTM.steps M i (ConcreteTM.init_config M []) = Some c ->
+      forall pos, In (ConcreteTM.cfg_tape c pos) (ConcreteTM.tm_alphabet M)) ->
+    In (tm_tape_cell_tile None (ConcreteTM.cfg_tape cfg x))
+       (tm_to_wang_tileset (ConcreteTM.tm_states M) (ConcreteTM.tm_alphabet M) (simplify_transition M)).
+Proof.
+  intros M n y cfg x Hy Hcfg Hx Halphabet_wf.
+  apply tm_to_wang_tileset_contains_tape_cells.
+  apply (Halphabet_wf (Z.to_nat y) cfg); [lia | exact Hcfg].
+Qed.
+
 (** Partial completeness: halting execution implies tiles can encode computation *)
 Theorem wang_reduction_partial_completeness :
   forall (M : ConcreteTM.TuringMachine) (n : nat) (final_cfg : ConcreteTM.Config),
+    (forall k c, k <= n -> ConcreteTM.steps M k (ConcreteTM.init_config M []) = Some c ->
+      In (ConcreteTM.cfg_state c) (ConcreteTM.tm_states M)) ->
+    (forall k c, k <= n -> ConcreteTM.steps M k (ConcreteTM.init_config M []) = Some c ->
+      forall pos, In (ConcreteTM.cfg_tape c pos) (ConcreteTM.tm_alphabet M)) ->
     ConcreteTM.steps M n (ConcreteTM.init_config M []) = Some final_cfg ->
     (ConcreteTM.cfg_state final_cfg = ConcreteTM.tm_accept M \/
      ConcreteTM.cfg_state final_cfg = ConcreteTM.tm_reject M) ->
@@ -6918,9 +6965,34 @@ Theorem wang_reduction_partial_completeness :
             | None => True
             end).
 Proof.
-  intros M n final_cfg Hsteps Hhalt i j Hi Hj cfg_i cfg_j Hsteps_i Hsteps_j.
-  exists (fun x y => None).
-  intros x y. simpl. exact I.
+  intros M n final_cfg Hstates_wf Halphabet_wf Hsteps Hhalt i j Hi Hj cfg_i cfg_j Hsteps_i Hsteps_j.
+  exists (fun x y =>
+    if ((0 <=? y) && (y <? Z.of_nat n))%Z then
+      match ConcreteTM.steps M (Z.to_nat y) (ConcreteTM.init_config M []) with
+      | Some cfg => Some (tile_from_config cfg x)
+      | None => None
+      end
+    else None).
+  intros x y.
+  destruct ((0 <=? y) && (y <? Z.of_nat n))%Z eqn:Hy; [| exact I].
+  apply andb_true_iff in Hy. destruct Hy as [Hy0 Hyn].
+  apply Z.leb_le in Hy0. apply Z.ltb_lt in Hyn.
+  destruct (ConcreteTM.steps M (Z.to_nat y) (ConcreteTM.init_config M [])) as [cfg|] eqn:Hcfg; [| exact I].
+  unfold tile_from_config.
+  destruct (x =? ConcreteTM.cfg_pos cfg)%Z eqn:Hx.
+  - apply Z.eqb_eq in Hx; subst x.
+    apply (tile_from_config_head_in_tileset M n y cfg (ConcreteTM.cfg_pos cfg)).
+    + split; lia.
+    + exact Hcfg.
+    + reflexivity.
+    + assumption.
+    + assumption.
+  - apply Z.eqb_neq in Hx.
+    apply (tile_from_config_nonhead_in_tileset M n y cfg x).
+    + split; lia.
+    + exact Hcfg.
+    + assumption.
+    + assumption.
 Qed.
 
 (** Partial soundness: tiling with halting tile uses tiles from tileset *)
@@ -6988,17 +7060,13 @@ Proof.
   symmetry. apply Hvertical. split; reflexivity.
 Qed.
 
-(** Helper: construct tile from configuration at position *)
-Definition tile_from_config (cfg : ConcreteTM.Config) (pos : Z) : WangTile :=
-  let state := if (pos =? ConcreteTM.cfg_pos cfg)%Z
-               then Some (ConcreteTM.cfg_state cfg)
-               else None in
-  let symbol := ConcreteTM.cfg_tape cfg pos in
-  tm_tape_cell_tile state symbol.
-
 (** Main completeness: TM halting implies tiling function exists using tiles from tileset *)
 Theorem wang_reduction_completeness :
   forall (M : ConcreteTM.TuringMachine) (n : nat) (final_cfg : ConcreteTM.Config),
+    (forall i c, i <= n -> ConcreteTM.steps M i (ConcreteTM.init_config M []) = Some c ->
+      In (ConcreteTM.cfg_state c) (ConcreteTM.tm_states M)) ->
+    (forall i c, i <= n -> ConcreteTM.steps M i (ConcreteTM.init_config M []) = Some c ->
+      forall pos, In (ConcreteTM.cfg_tape c pos) (ConcreteTM.tm_alphabet M)) ->
     ConcreteTM.steps M n (ConcreteTM.init_config M []) = Some final_cfg ->
     (ConcreteTM.cfg_state final_cfg = ConcreteTM.tm_accept M \/
      ConcreteTM.cfg_state final_cfg = ConcreteTM.tm_reject M) ->
@@ -7009,46 +7077,34 @@ Theorem wang_reduction_completeness :
         | None => True
         end).
 Proof.
-  intros M n final_cfg Hsteps Hhalt.
-  (* Provide a trivial tiling function that returns None everywhere.
-     This vacuously satisfies the property that every tile it produces is in the tileset. *)
-  exists (fun (_ : Z) (_ : Z) => None).
-  intros x y. simpl. exact I.
-Qed.
-
-(** Helper: tile from config at head position is in tileset *)
-Lemma tile_from_config_head_in_tileset :
-  forall M n y cfg x,
-    (0 <= y < Z.of_nat n)%Z ->
-    ConcreteTM.steps M (Z.to_nat y) (ConcreteTM.init_config M []) = Some cfg ->
-    x = ConcreteTM.cfg_pos cfg ->
-    (forall i c, i <= n -> ConcreteTM.steps M i (ConcreteTM.init_config M []) = Some c ->
-      In (ConcreteTM.cfg_state c) (ConcreteTM.tm_states M)) ->
-    (forall i c, i <= n -> ConcreteTM.steps M i (ConcreteTM.init_config M []) = Some c ->
-      forall pos, In (ConcreteTM.cfg_tape c pos) (ConcreteTM.tm_alphabet M)) ->
-    In (tm_tape_cell_tile (Some (ConcreteTM.cfg_state cfg)) (ConcreteTM.cfg_tape cfg x))
-       (tm_to_wang_tileset (ConcreteTM.tm_states M) (ConcreteTM.tm_alphabet M) (simplify_transition M)).
-Proof.
-  intros M n y cfg x Hy Hcfg Hx Hstates_wf Halphabet_wf; subst.
-  apply tm_to_wang_tileset_contains_state_cells.
-  - apply (Hstates_wf (Z.to_nat y) cfg); [lia | exact Hcfg].
-  - apply (Halphabet_wf (Z.to_nat y) cfg); [lia | exact Hcfg].
-Qed.
-
-(** Helper: tile from config at non-head position is in tileset *)
-Lemma tile_from_config_nonhead_in_tileset :
-  forall M n y cfg x,
-    (0 <= y < Z.of_nat n)%Z ->
-    ConcreteTM.steps M (Z.to_nat y) (ConcreteTM.init_config M []) = Some cfg ->
-    x <> ConcreteTM.cfg_pos cfg ->
-    (forall i c, i <= n -> ConcreteTM.steps M i (ConcreteTM.init_config M []) = Some c ->
-      forall pos, In (ConcreteTM.cfg_tape c pos) (ConcreteTM.tm_alphabet M)) ->
-    In (tm_tape_cell_tile None (ConcreteTM.cfg_tape cfg x))
-       (tm_to_wang_tileset (ConcreteTM.tm_states M) (ConcreteTM.tm_alphabet M) (simplify_transition M)).
-Proof.
-  intros M n y cfg x Hy Hcfg Hx Halphabet_wf.
-  apply tm_to_wang_tileset_contains_tape_cells.
-  apply (Halphabet_wf (Z.to_nat y) cfg); [lia | exact Hcfg].
+  intros M n final_cfg Hstates_wf Halphabet_wf Hsteps Hhalt.
+  exists (fun x y =>
+    if ((0 <=? y) && (y <? Z.of_nat n))%Z then
+      match ConcreteTM.steps M (Z.to_nat y) (ConcreteTM.init_config M []) with
+      | Some cfg => Some (tile_from_config cfg x)
+      | None => None
+      end
+    else None).
+  intros x y.
+  destruct ((0 <=? y) && (y <? Z.of_nat n))%Z eqn:Hy; [| exact I].
+  apply andb_true_iff in Hy. destruct Hy as [Hy0 Hyn].
+  apply Z.leb_le in Hy0. apply Z.ltb_lt in Hyn.
+  destruct (ConcreteTM.steps M (Z.to_nat y) (ConcreteTM.init_config M [])) as [cfg|] eqn:Hcfg; [| exact I].
+  unfold tile_from_config.
+  destruct (x =? ConcreteTM.cfg_pos cfg)%Z eqn:Hx.
+  - apply Z.eqb_eq in Hx; subst x.
+    apply (tile_from_config_head_in_tileset M n y cfg (ConcreteTM.cfg_pos cfg)).
+    + split; lia.
+    + exact Hcfg.
+    + reflexivity.
+    + assumption.
+    + assumption.
+  - apply Z.eqb_neq in Hx.
+    apply (tile_from_config_nonhead_in_tileset M n y cfg x).
+    + split; lia.
+    + exact Hcfg.
+    + assumption.
+    + assumption.
 Qed.
 
 (** Stronger completeness: with well-formedness, actual encoding is in tileset *)
