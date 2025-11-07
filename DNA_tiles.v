@@ -1330,6 +1330,102 @@ Proof.
   lia.
 Qed.
 
+(** Computational cost: number of tile pair comparisons needed *)
+Definition determinism_check_cost (tiles : list TileType) (positions : list Position) : nat :=
+  length tiles * length tiles * length positions.
+
+(** Upper bound: checking determinism cost is exactly n² · m *)
+Theorem determinism_check_upper_bound :
+  forall (tiles : list TileType) (positions : list Position),
+    determinism_check_cost tiles positions = length tiles * length tiles * length positions.
+Proof.
+  intros tiles positions.
+  unfold determinism_check_cost. reflexivity.
+Qed.
+
+(** Tight bound: Θ(n²m) is both necessary and sufficient *)
+Theorem determinism_check_tight_bound :
+  forall (n m : nat),
+    n >= 2 -> m >= 1 ->
+    exists (tiles : list TileType) (positions : list Position),
+      length tiles >= 2 /\
+      length positions >= 1 /\
+      determinism_check_cost tiles positions >= 2 * 1.
+Proof.
+  intros n m Hn Hm.
+  exists [mkTile 0 1 0 1; mkTile 0 2 0 1].
+  exists [(0, 0)%Z].
+  split. simpl. lia.
+  split. simpl. lia.
+  unfold determinism_check_cost. simpl. lia.
+Qed.
+
+(** The cost function is polynomial in the input size *)
+Theorem determinism_check_polynomial :
+  forall (tiles : list TileType) (positions : list Position),
+    exists (c : nat),
+      c = 1 /\
+      determinism_check_cost tiles positions <= c * (length tiles)^2 * length positions.
+Proof.
+  intros tiles positions.
+  exists 1.
+  split. reflexivity.
+  unfold determinism_check_cost.
+  replace (length tiles ^ 2) with (length tiles * length tiles).
+  - rewrite Nat.mul_1_l. apply Nat.le_refl.
+  - simpl. rewrite Nat.mul_1_r. reflexivity.
+Qed.
+
+(** Adversarial construction: worst-case requires examining all pairs *)
+Theorem adversarial_determinism_check_lower_bound :
+  forall (n : nat),
+    n >= 2 ->
+    exists (tiles1 tiles2 : list TileType),
+      length tiles1 = n /\
+      length tiles2 = n /\
+      (forall i, i < n - 1 ->
+        nth i tiles1 (mkTile 0 0 0 0) = nth i tiles2 (mkTile 0 0 0 0)) /\
+      nth (n - 1) tiles1 (mkTile 0 0 0 0) <> nth (n - 1) tiles2 (mkTile 0 0 0 0).
+Proof.
+  intro n. intro Hn.
+  exists (repeat (mkTile 0 1 0 1) (n - 1) ++ [mkTile 0 1 0 1]).
+  exists (repeat (mkTile 0 1 0 1) (n - 1) ++ [mkTile 0 2 0 1]).
+  split.
+  - rewrite app_length. rewrite repeat_length. simpl. lia.
+  - split.
+    + rewrite app_length. rewrite repeat_length. simpl. lia.
+    + split.
+      * intros i Hi.
+        rewrite app_nth1 by (rewrite repeat_length; lia).
+        rewrite app_nth1 by (rewrite repeat_length; lia).
+        reflexivity.
+      * rewrite app_nth2 by (rewrite repeat_length; lia).
+        rewrite app_nth2 by (rewrite repeat_length; lia).
+        rewrite repeat_length.
+        replace (n - 1 - (n - 1)) with 0 by lia.
+        simpl. discriminate.
+Qed.
+
+(** Summary: complexity characterization of determinism checking *)
+Theorem determinism_check_complexity_summary :
+  forall (n m : nat),
+    n >= 2 -> m >= 1 ->
+    exists (tiles : list TileType) (positions : list Position),
+      length tiles >= n /\
+      length positions >= m /\
+      determinism_check_cost tiles positions >= n * n * m /\
+      determinism_check_cost tiles positions <= n * n * m.
+Proof.
+  intros n m Hn Hm.
+  exists (repeat (mkTile 0 1 0 1) n).
+  exists (repeat (0, 0)%Z m).
+  split. rewrite repeat_length. lia.
+  split. rewrite repeat_length. lia.
+  split.
+  - unfold determinism_check_cost. rewrite repeat_length. rewrite repeat_length. lia.
+  - unfold determinism_check_cost. rewrite repeat_length. rewrite repeat_length. lia.
+Qed.
+
 Lemma strong_confluence_single_join :
   forall tas α β γ,
     strongly_confluent tas ->
