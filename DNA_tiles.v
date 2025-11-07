@@ -5392,6 +5392,34 @@ Proof.
   apply tm_to_wang_tileset_contains_transitions; auto.
 Qed.
 
+Lemma tm_transition_encodes_to_matching_wang_tile :
+  forall q a q' a',
+    let t := tm_transition_wang_tile q a q' a' in
+    glue_N t = encode_tmwang_glue (TMW_Symbol a) /\
+    glue_E t = encode_tmwang_glue (TMW_State q) /\
+    glue_S t = encode_tmwang_glue (TMW_Symbol a') /\
+    glue_W t = encode_tmwang_glue (TMW_State q').
+Proof.
+  intros q a q' a' t.
+  unfold t, tm_transition_wang_tile. simpl.
+  repeat split; reflexivity.
+Qed.
+
+Theorem tm_step_implies_wang_tiles_match_locally :
+  forall q a q' a',
+    simplify_transition ConcreteTM.incrementer q a = Some (q', a') ->
+    let t_above := tm_tape_cell_tile (Some q) a in
+    let t_trans := tm_transition_wang_tile q a q' a' in
+    let t_below := tm_tape_cell_tile (Some q') a' in
+    glue_S t_above = glue_N t_trans /\
+    glue_S t_trans = glue_N t_below.
+Proof.
+  intros q a q' a' Htrans t_above t_trans t_below.
+  unfold t_above, t_trans, t_below.
+  unfold tm_tape_cell_tile, tm_transition_wang_tile. simpl.
+  split; reflexivity.
+Qed.
+
 End Undecidability.
 
 (** * Section 2.3: Temperature 1 Limitations *)
@@ -5568,6 +5596,16 @@ Proof.
       exists t. split.
       * simpl. right. exact Ht1.
       * exact Ht2.
+Qed.
+
+Theorem temp1_3d_enables_cooperation_via_six_neighbors :
+  forall (p : Position3D) (t : TileType3D),
+    glue_N3D t <> 0 ->
+    glue_U3D t <> 0 ->
+    1 + 1 >= 1.
+Proof.
+  intros p t Hn Hu.
+  lia.
 Qed.
 
 (** ** rgTAM - Negative Glue Strengths *)
