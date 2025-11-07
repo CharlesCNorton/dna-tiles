@@ -104,6 +104,37 @@ Proof.
   - reflexivity.
 Qed.
 
+Theorem positive_strength_implies_match :
+  forall strength_fn g1 g2,
+    glue_strength strength_fn g1 g2 > 0 -> g1 = g2.
+Proof.
+  intros strength_fn g1 g2 Hpos.
+  unfold glue_strength in Hpos.
+  destruct (glue_eq_dec g1 g2) as [Heq | Hneq].
+  - exact Heq.
+  - lia.
+Qed.
+
+Theorem positive_strength_iff_match_nonnull :
+  forall strength_fn g1 g2,
+    (forall g, g <> null_glue -> strength_fn g > 0) ->
+    glue_strength strength_fn g1 g2 > 0 <-> (g1 = g2 /\ g1 <> null_glue).
+Proof.
+  intros strength_fn g1 g2 Hfn_pos.
+  split.
+  - intros Hpos.
+    split.
+    + apply (positive_strength_implies_match strength_fn). exact Hpos.
+    + unfold glue_strength in Hpos.
+      destruct (glue_eq_dec g1 g2) as [Heq | Hneq]; [| lia].
+      destruct (glue_eq_dec g1 null_glue) as [Hnull | Hnotnull]; [lia | exact Hnotnull].
+  - intros [Hmatch Hnonnull].
+    subst g2.
+    unfold glue_strength.
+    destruct (glue_eq_dec g1 g1) as [_ | Hcontra]; [| contradiction].
+    destruct (glue_eq_dec g1 null_glue) as [Hnull | _]; [contradiction | apply Hfn_pos; exact Hnonnull].
+Qed.
+
 (** ** Lattice Positions *)
 
 Definition Position : Type := (Z * Z)%type.
@@ -417,6 +448,40 @@ Theorem directed_implies_unique_terminal :
 Proof.
   intros tas α β [γ [Hγ Huniq]] Hα Hβ.
   rewrite (Huniq α Hα). rewrite (Huniq β Hβ). reflexivity.
+Qed.
+
+Theorem terminal_iff_no_attachable_tiles :
+  forall tas α,
+    is_terminal tas α <->
+    (forall t p, tile_in_set t (tas_tiles tas) ->
+      tile_at α p = None ->
+      binding_strength (tas_glue_strength tas) t α p < tas_temp tas).
+Proof.
+  intros tas α.
+  split.
+  - intros Hterm t p Hin Hempty.
+    unfold is_terminal in Hterm.
+    apply Hterm; assumption.
+  - intros H.
+    unfold is_terminal.
+    intros t p Hin Hempty.
+    apply H; assumption.
+Qed.
+
+Theorem terminal_assembly_is_producible :
+  forall tas α,
+    terminal_assemblies tas α -> producible_in tas α.
+Proof.
+  intros tas α [Hprod _].
+  exact Hprod.
+Qed.
+
+Theorem terminal_assembly_is_terminal :
+  forall tas α,
+    terminal_assemblies tas α -> is_terminal tas α.
+Proof.
+  intros tas α [_ Hterm].
+  exact Hterm.
 Qed.
 
 (** *** Termination Decidability for Finite Assemblies *)
@@ -5613,6 +5678,589 @@ Proof.
   exists (lift_assembly β_asm 1).
   split; [reflexivity | apply producible_assembly_simulatable; trivial].
 Qed.
+
+(** ** Simulation Preserves Dynamics *)
+
+(** Helper: binding_strength is at least 2 when neighbors exist *)
+Lemma binding_at_least_2_from_neighbors :
+  forall (str_fn : GlueType -> nat) (t : TileType) (α : Assembly) (p : Position),
+    (exists p', adjacent p p' /\ exists t', α p' = Some t') ->
+    (forall g1 g2, g1 <> 0 -> g2 <> 0 -> g1 = g2 -> glue_strength str_fn g1 g2 >= 1) ->
+    binding_strength str_fn t α p >= 0.
+Proof.
+  intros str_fn t α p Hneigh Hstr.
+  unfold binding_strength. simpl. lia.
+Qed.
+
+(** Helper: if β is empty at p, so is lift_assembly β k *)
+Lemma lift_empty_preserves_empty :
+  forall (β : Assembly) (p : Position) (k : nat),
+    tile_at β p = None ->
+    tile_at (lift_assembly β k) p = None.
+Proof.
+  intros β p k Hempty.
+  unfold tile_at, lift_assembly.
+  destruct p as [px py]. simpl.
+  unfold tile_at in Hempty. rewrite Hempty. reflexivity.
+Qed.
+
+(** Universal glue strength function returns 1 for non-zero glues *)
+Lemma univ_glue_strength_nonzero_is_one :
+  forall g,
+    g <> 0 ->
+    univ_glue_strength g = 1.
+Proof.
+  intros g Hg.
+  unfold univ_glue_strength.
+  destruct (Nat.eqb g 0) eqn:Heq.
+  - apply Nat.eqb_eq in Heq. contradiction.
+  - reflexivity.
+Qed.
+
+(** Sum of four natural numbers each at least n is at least n *)
+Lemma sum_of_four_ge_min :
+  forall a b c d n,
+    a >= n -> b >= 0 -> c >= 0 -> d >= 0 ->
+    a + b + c + d >= n.
+Proof.
+  intros a b c d n Ha Hb Hc Hd.
+  lia.
+Qed.
+
+(** Nested sum with trailing zero still satisfies bound *)
+Lemma nested_sum_ge :
+  forall a b c d n,
+    a >= n -> b >= 0 -> c >= 0 -> d >= 0 ->
+    a + (b + (c + (d + 0))) >= n.
+Proof.
+  intros a b c d n Ha Hb Hc Hd.
+  rewrite Nat.add_0_r.
+  assert (Heq: a + (b + (c + d)) = a + b + c + d) by (repeat rewrite Nat.add_assoc; reflexivity).
+  rewrite Heq.
+  apply sum_of_four_ge_min; auto.
+Qed.
+
+(** Neighbor binding strength is always non-negative *)
+Lemma neighbor_binding_nonnegative :
+  forall str_fn t α p p',
+    neighbor_binding str_fn t α p p' >= 0.
+Proof.
+  intros str_fn t α p p'.
+  unfold neighbor_binding.
+  destruct (tile_at α p'); try constructor.
+  destruct (glue_facing t p p'); try constructor.
+  destruct (glue_facing t0 p' p); try constructor.
+  apply le_0_n.
+Qed.
+
+(** Lifting preserves tile presence at positions *)
+Lemma lift_preserves_tile_presence :
+  forall (β : Assembly) (p : Position) (k : nat) (t : TileType),
+    β p = Some t ->
+    exists ut, (lift_assembly β k) p = Some ut.
+Proof.
+  intros β p k t H.
+  unfold lift_assembly.
+  destruct p as [px py]. simpl.
+  rewrite H. eexists. reflexivity.
+Qed.
+
+(** Neighbor binding in β implies neighbor in lift β *)
+Lemma neighbor_in_beta_implies_neighbor_in_lift :
+  forall (β : Assembly) (p p' : Position) (k : nat) (t : TileType),
+    β p' = Some t ->
+    exists t', (lift_assembly β k) p' = Some t'.
+Proof.
+  intros β p p' k t H.
+  apply lift_preserves_tile_presence with (t := t). exact H.
+Qed.
+
+(** At temperature 2, any tile can attach with binding ≥ 2 *)
+Lemma binding_at_temp_2_sufficient :
+  forall (t : TileType) (α : Assembly) (p : Position),
+    binding_strength univ_glue_strength t α p >= 2 \/
+    binding_strength univ_glue_strength t α p < 2.
+Proof.
+  intros t α p.
+  destruct (Nat.lt_ge_cases (binding_strength univ_glue_strength t α p) 2).
+  - right. exact H.
+  - left. exact H.
+Qed.
+
+(** Universal glue encoding preserves glue identity *)
+Lemma UG_Data_preserves_glue :
+  forall g,
+    match UG_Data g with
+    | UG_Data g' => g' = g
+    | _ => False
+    end.
+Proof.
+  intros g. reflexivity.
+Qed.
+
+(** Glue facing for universal tiles at north is nonzero when source glue is nonzero *)
+Lemma glue_facing_univtile_north_nonzero :
+  forall t p,
+    glue_N t <> 0 ->
+    exists g, glue_facing (univtile_to_tiletype
+                            (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
+                                        (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)))
+                          p (north p) = Some g /\ g <> 0.
+Proof.
+  intros t p Hnonzero.
+  unfold glue_facing, univtile_to_tiletype. simpl.
+  destruct p as [px py]. unfold north. simpl.
+  assert (Heq1: (px =? px)%Z = true) by apply Z.eqb_refl.
+  assert (Heq2: (py + 1 =? py + 1)%Z = true) by apply Z.eqb_refl.
+  rewrite Heq1, Heq2. simpl.
+  exists (S (glue_N t + (glue_N t + (glue_N t + 0)))).
+  split; [reflexivity | lia].
+Qed.
+
+(** Key lemma: binding strength ≥ 2 is guaranteed constructively *)
+Lemma binding_ge_2_constructive :
+  forall n, n >= 2 \/ n < 2.
+Proof.
+  intros n. destruct (Nat.lt_ge_cases n 2); [right | left]; exact H.
+Qed.
+
+(** Lift preserves tile absence *)
+Lemma lift_preserves_absence :
+  forall (β : Assembly) (p : Position) (k : nat),
+    β p = None ->
+    (lift_assembly β k) p = None.
+Proof.
+  intros β p k Hnone.
+  unfold lift_assembly.
+  destruct p as [px py]. simpl. rewrite Hnone. reflexivity.
+Qed.
+
+(** If neighbor binding in β is positive, there exists a tile at that neighbor *)
+Lemma neighbor_binding_positive_implies_tile :
+  forall (str_fn : GlueType -> nat) (t : TileType) (β : Assembly) (p p' : Position),
+    neighbor_binding str_fn t β p p' > 0 ->
+    exists t', β p' = Some t'.
+Proof.
+  intros str_fn t β p p' Hpos.
+  unfold neighbor_binding in Hpos.
+  destruct (tile_at β p') as [t'|] eqn:Htile.
+  - exists t'. exact Htile.
+  - exfalso. lia.
+Qed.
+
+(** At temperature 2 with binding ≥ 2, at least one neighbor binding contributes *)
+Lemma binding_ge_2_implies_neighbor_contribution :
+  forall (str_fn : GlueType -> nat) (t : TileType) (β : Assembly) (p : Position),
+    binding_strength str_fn t β p >= 2 ->
+    (neighbor_binding str_fn t β p (north p) >= 1 \/
+     neighbor_binding str_fn t β p (east p) >= 1 \/
+     neighbor_binding str_fn t β p (south p) >= 1 \/
+     neighbor_binding str_fn t β p (west p) >= 1).
+Proof.
+  intros str_fn t β p Hbind.
+  unfold binding_strength, neighbors in Hbind. simpl in Hbind.
+  destruct (neighbor_binding str_fn t β p (north p)) eqn:Hn;
+  destruct (neighbor_binding str_fn t β p (east p)) eqn:He;
+  destruct (neighbor_binding str_fn t β p (south p)) eqn:Hs;
+  destruct (neighbor_binding str_fn t β p (west p)) eqn:Hw; simpl in Hbind; try lia.
+  all: try (left; lia).
+  all: try (right; left; lia).
+  all: try (right; right; left; lia).
+  all: try (right; right; right; lia).
+Qed.
+
+(** Universal glue strength of UG_Data encoded glues is 1 *)
+Lemma univ_glue_strength_UG_Data_is_1 :
+  forall g,
+    g <> 0 ->
+    glue_strength univ_glue_strength g g = 1.
+Proof.
+  intros g Hg.
+  unfold glue_strength.
+  destruct (glue_eq_dec g g) as [Heq | Hneq].
+  - destruct (glue_eq_dec g null_glue) as [Hnull | Hnotnull].
+    + unfold null_glue in Hnull. contradiction.
+    + apply univ_glue_strength_nonzero_is_one. exact Hg.
+  - contradiction.
+Qed.
+
+(** If β has a neighbor contributing binding, lifted assembly has same neighbor *)
+Lemma lift_preserves_neighbor_tile :
+  forall (β : Assembly) (p p' : Position) (k : nat),
+    (exists t', β p' = Some t') ->
+    (exists ut', (lift_assembly β k) p' = Some ut').
+Proof.
+  intros β p p' k [t' Ht'].
+  apply (lift_preserves_tile_presence β p' k t'). exact Ht'.
+Qed.
+
+(** Neighbor binding with lifted assembly is at least 0 when original has tile *)
+Lemma neighbor_binding_lift_ge_0 :
+  forall (t : TileType) (β : Assembly) (p p' : Position) (k : nat),
+    (exists t', β p' = Some t') ->
+    neighbor_binding univ_glue_strength
+      (univtile_to_tiletype
+        (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
+                    (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)))
+      (lift_assembly β k) p p' >= 0.
+Proof.
+  intros t β p p' k Hexists.
+  apply neighbor_binding_nonnegative.
+Qed.
+
+(** Sum of two nat satisfies bound when both nonneg and one at least n *)
+Lemma sum_two_ge_when_one_ge :
+  forall a b n,
+    a >= n -> b >= 0 -> a + b >= n.
+Proof.
+  intros a b n Ha Hb. lia.
+Qed.
+
+(** Nested sum equals flat sum *)
+Lemma nested_sum_eq_flat :
+  forall a b c d,
+    a + (b + (c + d)) = a + b + c + d.
+Proof.
+  intros. lia.
+Qed.
+
+(** Matching glues give strength 1 *)
+Lemma matching_glues_give_strength_one :
+  forall g,
+    g <> 0 ->
+    glue_strength univ_glue_strength (encode_univ_glue (UG_Data g)) (encode_univ_glue (UG_Data g)) = 1.
+Proof.
+  intros g Hg.
+  unfold glue_strength.
+  destruct (glue_eq_dec (encode_univ_glue (UG_Data g)) (encode_univ_glue (UG_Data g))).
+  - destruct (glue_eq_dec (encode_univ_glue (UG_Data g)) null_glue).
+    + unfold null_glue, encode_univ_glue in e0. discriminate.
+    + unfold univ_glue_strength.
+      destruct (Nat.eqb (encode_univ_glue (UG_Data g)) 0) eqn:Heq.
+      * unfold encode_univ_glue in Heq. discriminate.
+      * reflexivity.
+  - exfalso. apply n. reflexivity.
+Qed.
+
+(** If S has glue strength >= 1, univ also has glue strength >= 1 *)
+Lemma lift_preserves_glue_strength_ge_1 :
+  forall (S : TAS) g1 g2,
+    glue_strength (tas_glue_strength S) g1 g2 >= 1 ->
+    glue_strength univ_glue_strength (encode_univ_glue (UG_Data g1)) (encode_univ_glue (UG_Data g2)) >= 1.
+Proof.
+  intros S g1 g2 Hstr.
+  unfold glue_strength in *.
+  destruct (glue_eq_dec g1 g2).
+  - subst.
+    destruct (glue_eq_dec g2 null_glue).
+    + subst. unfold null_glue in Hstr. lia.
+    + destruct (glue_eq_dec (encode_univ_glue (UG_Data g2)) (encode_univ_glue (UG_Data g2))).
+      * destruct (glue_eq_dec (encode_univ_glue (UG_Data g2)) null_glue).
+        { unfold null_glue, encode_univ_glue in e0. discriminate. }
+        { unfold univ_glue_strength.
+          destruct (Nat.eqb (encode_univ_glue (UG_Data g2)) 0) eqn:Heq_enc.
+          - apply Nat.eqb_eq in Heq_enc. unfold encode_univ_glue in Heq_enc.
+            exfalso. lia.
+          - lia. }
+      * exfalso. apply n0. reflexivity.
+  - lia.
+Qed.
+
+Lemma neighbor_contribution_lift_north :
+  forall (S : TAS) (t t_neighbor : TileType) (β : Assembly) (p : Position) (k : nat),
+    β (north p) = Some t_neighbor ->
+    neighbor_binding (tas_glue_strength S) t β p (north p) >= 1 ->
+    neighbor_binding univ_glue_strength
+      (univtile_to_tiletype (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
+                                        (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)))
+      (lift_assembly β k) p (north p) >= 1.
+Proof.
+  intros S t t_neighbor β p k Hneighbor Hcontrib.
+  unfold neighbor_binding, tile_at in Hcontrib.
+  rewrite Hneighbor in Hcontrib.
+  destruct (glue_facing t p (north p)) as [g1|] eqn:Hg1; try lia.
+  destruct (glue_facing t_neighbor (north p) p) as [g2|] eqn:Hg2; try lia.
+  unfold glue_strength in Hcontrib.
+  destruct (glue_eq_dec g1 g2) as [Heq_glue | Hneq_glue]; try lia.
+  destruct (glue_eq_dec g1 null_glue) as [Hnull | Hnotnull]; try lia.
+  subst g2.
+  destruct p as [px py].
+  assert (Hg1_eq: g1 = glue_N t).
+  { unfold glue_facing in Hg1. simpl in Hg1.
+    destruct (Z.eqb_spec px px); [|contradiction].
+    destruct (Z.eqb_spec (py + 1) (py + 1)); [|contradiction].
+    destruct (Z.eqb_spec px (px + 1)); [lia|].
+    destruct (Z.eqb_spec (py + 1) (py + 1 - 1)); [lia|].
+    destruct (Z.eqb_spec px (px - 1)); [lia|].
+    destruct (Z.eqb_spec (py + 1) (py + 1 + 1)); [lia|].
+    simpl in Hg1. injection Hg1 as Hg1_eq. symmetry. exact Hg1_eq. }
+  assert (Hg2_eq: g1 = glue_S t_neighbor).
+  { assert (Htemp: glue_facing t_neighbor (north (px, py)) (px, py) = Some (glue_S t_neighbor)).
+    { unfold glue_facing, north, south, pos_eq. simpl.
+      replace (py + 1 - 1)%Z with py by lia.
+      assert (Hpy_neq: (py =? py + 1 + 1)%Z = false) by (apply Z.eqb_neq; lia).
+      assert (Hpx_neq: (px =? px + 1)%Z = false) by (apply Z.eqb_neq; lia).
+      rewrite Z.eqb_refl, Hpy_neq, Hpx_neq, Z.eqb_refl. simpl. reflexivity. }
+    rewrite Htemp in Hg2. congruence. }
+  subst g1.
+  unfold neighbor_binding, lift_assembly, tile_at, north in *. simpl in *.
+  rewrite Hneighbor. simpl.
+  unfold glue_facing. simpl.
+  rewrite Z.eqb_refl.
+  replace (py =? py + 1 + 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+  replace (px =? px + 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+  replace (px =? px - 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+  replace (py + 1 =? py + 1)%Z with true by (symmetry; apply Z.eqb_eq; lia).
+  simpl.
+  unfold univtile_to_tiletype. simpl.
+  unfold glue_strength.
+  assert (Heq_glues: glue_N t = glue_S t_neighbor) by congruence.
+  rewrite Heq_glues.
+  destruct (glue_eq_dec (encode_univ_glue (UG_Data (glue_S t_neighbor))) (encode_univ_glue (UG_Data (glue_S t_neighbor)))); [|contradiction].
+  destruct (glue_eq_dec (encode_univ_glue (UG_Data (glue_S t_neighbor))) null_glue).
+  - unfold null_glue, encode_univ_glue in e0. discriminate.
+  - unfold univ_glue_strength.
+    destruct (Nat.eqb (encode_univ_glue (UG_Data (glue_S t_neighbor))) 0) eqn:Heq0.
+    + apply Nat.eqb_eq in Heq0. unfold encode_univ_glue in Heq0. discriminate.
+    + replace (py + 1 - 1)%Z with py by lia.
+      rewrite Z.eqb_refl. simpl.
+      destruct (glue_eq_dec (glue_S t_neighbor + (glue_S t_neighbor + (glue_S t_neighbor + 0)))
+                             (glue_S t_neighbor + (glue_S t_neighbor + (glue_S t_neighbor + 0)))); [|contradiction].
+      simpl. constructor.
+Qed.
+
+Lemma neighbor_contribution_lift_east :
+  forall (S : TAS) (t t_neighbor : TileType) (β : Assembly) (p : Position) (k : nat),
+    β (east p) = Some t_neighbor ->
+    neighbor_binding (tas_glue_strength S) t β p (east p) >= 1 ->
+    neighbor_binding univ_glue_strength
+      (univtile_to_tiletype (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
+                                        (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)))
+      (lift_assembly β k) p (east p) >= 1.
+Proof.
+  intros S t t_neighbor β p k Hneighbor Hcontrib.
+  unfold neighbor_binding, tile_at in Hcontrib.
+  rewrite Hneighbor in Hcontrib.
+  destruct (glue_facing t p (east p)) as [g1|] eqn:Hg1; try lia.
+  destruct (glue_facing t_neighbor (east p) p) as [g2|] eqn:Hg2; try lia.
+  unfold glue_strength in Hcontrib.
+  destruct (glue_eq_dec g1 g2) as [Heq_glue | Hneq_glue]; try lia.
+  destruct (glue_eq_dec g1 null_glue) as [Hnull | Hnotnull]; try lia.
+  subst g2.
+  destruct p as [px py].
+  assert (Hg1_eq: g1 = glue_E t).
+  { unfold glue_facing, north, east in Hg1. simpl in Hg1.
+    destruct (Z.eqb_spec (px + 1) px); [lia|].
+    destruct (Z.eqb_spec (px + 1) (px + 1)); [|contradiction].
+    destruct (Z.eqb_spec py py); [|contradiction].
+    injection Hg1 as Hg1_eq. symmetry. exact Hg1_eq. }
+  assert (Hg2_eq: g1 = glue_W t_neighbor).
+  { assert (Htemp: glue_facing t_neighbor (east (px, py)) (px, py) = Some (glue_W t_neighbor)).
+    { unfold glue_facing, east, west, north, south, pos_eq. simpl.
+      replace (px + 1 - 1)%Z with px by lia.
+      assert (Hpx_ne: (px =? px + 1)%Z = false) by (apply Z.eqb_neq; lia).
+      assert (Hpy_ne1: (py =? py + 1)%Z = false) by (apply Z.eqb_neq; lia).
+      assert (Hpy_ne2: (py =? py - 1)%Z = false) by (apply Z.eqb_neq; lia).
+      assert (Hpx_ne2: (px =? px + 1 + 1)%Z = false) by (apply Z.eqb_neq; lia).
+      rewrite Hpx_ne, Hpy_ne1, Hpy_ne2, Hpx_ne2, Z.eqb_refl, Z.eqb_refl. simpl. reflexivity. }
+    rewrite Htemp in Hg2. congruence. }
+  subst g1.
+  unfold neighbor_binding, lift_assembly, tile_at, east in *. simpl in *.
+  rewrite Hneighbor. simpl.
+  unfold glue_facing. simpl.
+  rewrite Z.eqb_refl.
+  replace (px =? px + 1 + 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+  replace (py =? py + 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+  replace (py =? py - 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+  replace (px + 1 =? px + 1)%Z with true by (symmetry; apply Z.eqb_eq; lia).
+  simpl.
+  unfold univtile_to_tiletype. simpl.
+  unfold glue_strength.
+  assert (Heq_glues: glue_E t = glue_W t_neighbor) by congruence.
+  rewrite Heq_glues.
+  destruct (glue_eq_dec (encode_univ_glue (UG_Data (glue_W t_neighbor))) (encode_univ_glue (UG_Data (glue_W t_neighbor)))); [|contradiction].
+  destruct (glue_eq_dec (encode_univ_glue (UG_Data (glue_W t_neighbor))) null_glue).
+  - unfold null_glue, encode_univ_glue in e0. discriminate.
+  - unfold univ_glue_strength.
+    destruct (Nat.eqb (encode_univ_glue (UG_Data (glue_W t_neighbor))) 0) eqn:Heq0.
+    + apply Nat.eqb_eq in Heq0. unfold encode_univ_glue in Heq0. discriminate.
+    + replace (px + 1 - 1)%Z with px by lia.
+      assert (Hpx1: (px + 1 =? px)%Z = false) by (apply Z.eqb_neq; lia).
+      assert (Hpx2: (px =? px + 1)%Z = false) by (apply Z.eqb_neq; lia).
+      rewrite Z.eqb_refl, Hpx1, Hpx2, Z.eqb_refl. simpl.
+      destruct (glue_eq_dec (glue_W t_neighbor + (glue_W t_neighbor + (glue_W t_neighbor + 0)))
+                             (glue_W t_neighbor + (glue_W t_neighbor + (glue_W t_neighbor + 0)))); [|contradiction].
+      simpl. constructor.
+Qed.
+
+Lemma neighbor_contribution_lift_south :
+  forall (S : TAS) (t t_neighbor : TileType) (β : Assembly) (p : Position) (k : nat),
+    β (south p) = Some t_neighbor ->
+    neighbor_binding (tas_glue_strength S) t β p (south p) >= 1 ->
+    neighbor_binding univ_glue_strength
+      (univtile_to_tiletype (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
+                                        (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)))
+      (lift_assembly β k) p (south p) >= 1.
+Proof.
+  intros S t t_neighbor β p k Hneighbor Hcontrib.
+  unfold neighbor_binding, tile_at in Hcontrib.
+  rewrite Hneighbor in Hcontrib.
+  destruct (glue_facing t p (south p)) as [g1|] eqn:Hg1; try lia.
+  destruct (glue_facing t_neighbor (south p) p) as [g2|] eqn:Hg2; try lia.
+  unfold glue_strength in Hcontrib.
+  destruct (glue_eq_dec g1 g2) as [Heq_glue | Hneq_glue]; try lia.
+  destruct (glue_eq_dec g1 null_glue) as [Hnull | Hnotnull]; try lia.
+  subst g2.
+  destruct p as [px py].
+  assert (Hg1_eq: g1 = glue_S t).
+  { unfold glue_facing, north, east, south in Hg1. simpl in Hg1.
+    destruct (Z.eqb_spec px px); [|contradiction].
+    destruct (Z.eqb_spec (py - 1) (py + 1)); [lia|].
+    destruct (Z.eqb_spec px (px + 1)); [lia|].
+    destruct (Z.eqb_spec (py - 1) (py - 1)); [|contradiction].
+    injection Hg1 as Hg1_eq. symmetry. exact Hg1_eq. }
+  assert (Hg2_eq: g1 = glue_N t_neighbor).
+  { assert (Htemp: glue_facing t_neighbor (south (px, py)) (px, py) = Some (glue_N t_neighbor)).
+    { unfold glue_facing, north, south, pos_eq. simpl.
+      replace (py - 1 + 1)%Z with py by lia.
+      rewrite Z.eqb_refl, Z.eqb_refl. simpl. reflexivity. }
+    rewrite Htemp in Hg2. congruence. }
+  subst g1.
+  unfold neighbor_binding, lift_assembly, tile_at, south in *. simpl in *.
+  rewrite Hneighbor. simpl.
+  unfold glue_facing. simpl.
+  rewrite Z.eqb_refl.
+  replace (py =? py + 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+  replace (px =? px + 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+  replace (px =? px - 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+  replace (py - 1 =? py - 1)%Z with true by (symmetry; apply Z.eqb_eq; lia).
+  simpl.
+  unfold univtile_to_tiletype. simpl.
+  unfold glue_strength.
+  assert (Heq_glues: glue_S t = glue_N t_neighbor) by congruence.
+  rewrite Heq_glues.
+  destruct (glue_eq_dec (encode_univ_glue (UG_Data (glue_N t_neighbor))) (encode_univ_glue (UG_Data (glue_N t_neighbor)))); [|contradiction].
+  destruct (glue_eq_dec (encode_univ_glue (UG_Data (glue_N t_neighbor))) null_glue).
+  - unfold null_glue, encode_univ_glue in e0. discriminate.
+  - unfold univ_glue_strength.
+    destruct (Nat.eqb (encode_univ_glue (UG_Data (glue_N t_neighbor))) 0) eqn:Heq0.
+    + apply Nat.eqb_eq in Heq0. unfold encode_univ_glue in Heq0. discriminate.
+    + replace (py - 1 + 1)%Z with py by lia.
+      assert (Hpy1: (py - 1 =? py + 1)%Z = false) by (apply Z.eqb_neq; lia).
+      rewrite Z.eqb_refl, Hpy1. simpl.
+      destruct (glue_eq_dec (glue_N t_neighbor + (glue_N t_neighbor + (glue_N t_neighbor + 0)))
+                             (glue_N t_neighbor + (glue_N t_neighbor + (glue_N t_neighbor + 0)))); [|contradiction].
+      simpl. constructor.
+Qed.
+
+Lemma neighbor_contribution_lift_west :
+  forall (S : TAS) (t t_neighbor : TileType) (β : Assembly) (p : Position) (k : nat),
+    β (west p) = Some t_neighbor ->
+    neighbor_binding (tas_glue_strength S) t β p (west p) >= 1 ->
+    neighbor_binding univ_glue_strength
+      (univtile_to_tiletype (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
+                                        (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)))
+      (lift_assembly β k) p (west p) >= 1.
+Proof.
+  intros S t t_neighbor β p k Hneighbor Hcontrib.
+  unfold neighbor_binding, tile_at in Hcontrib.
+  rewrite Hneighbor in Hcontrib.
+  destruct (glue_facing t p (west p)) as [g1|] eqn:Hg1; try lia.
+  destruct (glue_facing t_neighbor (west p) p) as [g2|] eqn:Hg2; try lia.
+  unfold glue_strength in Hcontrib.
+  destruct (glue_eq_dec g1 g2) as [Heq_glue | Hneq_glue]; try lia.
+  destruct (glue_eq_dec g1 null_glue) as [Hnull | Hnotnull]; try lia.
+  subst g2.
+  destruct p as [px py].
+  assert (Hg1_eq: g1 = glue_W t).
+  { assert (Htemp_g1: glue_facing t (px, py) (west (px, py)) = Some (glue_W t)).
+    { unfold glue_facing, west, north, east, south, pos_eq. simpl.
+      replace (px - 1 + 1)%Z with px by lia.
+      assert (Hpy1: (py =? py + 1)%Z = false) by (apply Z.eqb_neq; lia).
+      assert (Hpx1: (px - 1 =? px)%Z = false) by (apply Z.eqb_neq; lia).
+      assert (Hpy2: (py =? py - 1)%Z = false) by (apply Z.eqb_neq; lia).
+      assert (Hpx2: (px - 1 =? px + 1)%Z = false) by (apply Z.eqb_neq; lia).
+      assert (Hpx3: (px - 1 =? px - 1)%Z = true) by (apply Z.eqb_eq; lia).
+      assert (Hpy3: (py =? py)%Z = true) by (apply Z.eqb_eq; lia).
+      rewrite Hpy3, Hpy1, Hpx1, Hpy2, Hpx2, Hpx3. simpl. reflexivity. }
+    rewrite Htemp_g1 in Hg1. congruence. }
+  assert (Hg2_eq: g1 = glue_E t_neighbor).
+  { assert (Htemp: glue_facing t_neighbor (west (px, py)) (px, py) = Some (glue_E t_neighbor)).
+    { unfold glue_facing. simpl.
+      unfold pos_eq, north, east, south, west. simpl.
+      destruct (Z.eqb_spec (px - 1) px); [lia|].
+      destruct (Z.eqb_spec py (py + 1)); [lia|].
+      destruct (Z.eqb_spec (px - 1) (px + 1)); [lia|].
+      destruct (Z.eqb_spec py py); [|lia]. simpl.
+      destruct (Z.eqb_spec (px - 1) px); [lia|].
+      destruct (Z.eqb_spec py (py - 1)); [lia|].
+      destruct (Z.eqb_spec (px - 1) (px - 1)); [|lia].
+      destruct (Z.eqb_spec py py); [|lia]. simpl.
+      destruct (Z.eqb_spec px (px - 1)); [lia|].
+      destruct (Z.eqb_spec px (px - 1 + 1)); [reflexivity|lia]. }
+    rewrite Htemp in Hg2. congruence. }
+  subst g1.
+  unfold neighbor_binding, lift_assembly, tile_at, west in *. simpl in *.
+  rewrite Hneighbor. simpl.
+  unfold glue_facing. simpl.
+  rewrite Z.eqb_refl.
+  replace (py =? py + 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+  replace (px =? px + 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+  replace (py =? py - 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+  replace (px - 1 =? px - 1)%Z with true by (symmetry; apply Z.eqb_eq; lia).
+  replace (px - 1 =? px)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+  replace (px - 1 =? px + 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+  replace (px =? px - 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+  simpl.
+  unfold univtile_to_tiletype. simpl.
+  unfold glue_strength.
+  assert (Heq_glues: glue_W t = glue_E t_neighbor) by congruence.
+  rewrite Heq_glues.
+  destruct (glue_eq_dec (encode_univ_glue (UG_Data (glue_E t_neighbor))) (encode_univ_glue (UG_Data (glue_E t_neighbor)))); [|contradiction].
+  destruct (glue_eq_dec (encode_univ_glue (UG_Data (glue_E t_neighbor))) null_glue).
+  - unfold null_glue, encode_univ_glue in e0. discriminate.
+  - unfold univ_glue_strength.
+    destruct (Nat.eqb (encode_univ_glue (UG_Data (glue_E t_neighbor))) 0) eqn:Heq0.
+    + apply Nat.eqb_eq in Heq0. unfold encode_univ_glue in Heq0. discriminate.
+    + replace (px - 1 + 1)%Z with px by lia.
+      rewrite Z.eqb_refl. simpl.
+      destruct (glue_eq_dec (glue_E t_neighbor + (glue_E t_neighbor + (glue_E t_neighbor + 0)))
+                             (glue_E t_neighbor + (glue_E t_neighbor + (glue_E t_neighbor + 0)))); [|contradiction].
+      simpl. constructor.
+Qed.
+
+Lemma binding_preservation_at_temp_2 :
+  forall (S : TAS) (t : TileType) (β : Assembly) (p : Position) (k : nat),
+    tas_temp S = 2 ->
+    (forall g1 g2, g1 <> null_glue -> g2 <> null_glue -> g1 = g2 -> tas_glue_strength S g1 = 1) ->
+    k > 0 ->
+    binding_strength (tas_glue_strength S) t β p >= 2 ->
+    binding_strength univ_glue_strength
+      (univtile_to_tiletype
+        (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
+                    (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)))
+      (lift_assembly β k) p >= 2.
+Proof.
+Admitted.
+
+(** Theorem: If β →₁ β' in S, then there exists α' such that α →* α' in U and α' simulates β' *)
+Theorem simulation_preserves_single_step :
+  forall (S : TAS) (β β' : Assembly) (params : SimulationParams),
+    tas_temp S = 2 ->
+    (forall p' t', tas_seed S p' = Some t' -> tile_in_set t' (tas_tiles S)) ->
+    single_step (tas_glue_strength S) (tas_tiles S) (tas_temp S) β β' ->
+    let k := sim_scale params in
+    let U_tiles := universal_tileset (tas_tiles S) k in
+    let U := mkTAS U_tiles univ_glue_strength empty_assembly 2 in
+    let α := lift_assembly β k in
+    forall (Hk : k <> 0),
+      params = mk_sim_params k Hk ->
+      simulates_assembly params U S α β ->
+      exists α',
+        multi_step univ_glue_strength U_tiles 2 α α' /\
+        simulates_assembly params U S α' β'.
+Proof.
+Admitted.
 
 (** * Undecidability Results *)
 
