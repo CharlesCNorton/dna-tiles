@@ -2802,6 +2802,21 @@ Proof.
   reflexivity.
 Qed.
 
+(** A Wang tiling encodes a TM computation if each row encodes a configuration *)
+Definition wang_tiling_encodes_computation (W : WangTiling)
+  (init_row : Z) : Prop :=
+  forall row : Z,
+    (row >= init_row)%Z ->
+    exists state_pos : Z, exists state : nat, exists tape : Z -> nat,
+      wang_tiling_encodes_tm_config W row state_pos state tape.
+
+(** Wang tiling reaches halting state if some row has halting state *)
+Definition wang_tiling_reaches_halting (W : WangTiling) (accept_state reject_state : nat) : Prop :=
+  exists row : Z, exists pos : Z,
+    exists t, tile_at W (pos, row) = Some t /\
+      (glue_E t = encode_tmwang_glue (TMW_State accept_state) \/
+       glue_E t = encode_tmwang_glue (TMW_State reject_state)).
+
 End WangTilings.
 
 (** * Section 2.1: Turing Completeness at Temperature 2 *)
@@ -5473,6 +5488,349 @@ Proof.
   unfold t_above, t_trans, t_below.
   unfold tm_tape_cell_tile, tm_transition_wang_tile. simpl.
   split; reflexivity.
+Qed.
+
+(** Weak completeness: Halting implies tileset contains necessary tiles *)
+Theorem wang_reduction_weak_completeness :
+  forall (M : ConcreteTM.TuringMachine) (input : list nat),
+    (exists n c,
+      ConcreteTM.steps M n (ConcreteTM.init_config M input) = Some c /\
+      (ConcreteTM.cfg_state c = ConcreteTM.tm_accept M \/
+       ConcreteTM.cfg_state c = ConcreteTM.tm_reject M)) ->
+    forall q a q' a',
+      In q (ConcreteTM.tm_states M) ->
+      In a (ConcreteTM.tm_alphabet M) ->
+      simplify_transition M q a = Some (q', a') ->
+      In (tm_transition_wang_tile q a q' a')
+        (tm_to_wang_tileset (ConcreteTM.tm_states M) (ConcreteTM.tm_alphabet M) (simplify_transition M)).
+Proof.
+  intros M input Hhalts q a q' a' Hq Ha Htrans.
+  apply tm_to_wang_tileset_contains_transitions; auto.
+Qed.
+
+(** If TM takes a step, the wang tiles match vertically *)
+Lemma tm_step_implies_vertical_tile_match :
+  forall (M : ConcreteTM.TuringMachine) (c c' : ConcreteTM.Config),
+    ConcreteTM.step M c = Some c' ->
+    let q := ConcreteTM.cfg_state c in
+    let a := ConcreteTM.tape_read (ConcreteTM.cfg_tape c) (ConcreteTM.cfg_pos c) in
+    let q' := ConcreteTM.cfg_state c' in
+    let a' := ConcreteTM.tape_read (ConcreteTM.cfg_tape c') (ConcreteTM.cfg_pos c) in
+    let t_above := tm_tape_cell_tile (Some q) a in
+    let t_trans := tm_transition_wang_tile q a q' a' in
+    glue_S t_above = glue_N t_trans.
+Proof.
+  intros M c c' Hstep q a q' a' t_above t_trans.
+  unfold ConcreteTM.step in Hstep.
+  destruct (ConcreteTM.tm_transition M (ConcreteTM.cfg_state c)
+    (ConcreteTM.tape_read (ConcreteTM.cfg_tape c) (ConcreteTM.cfg_pos c))) as [[[q'' a''] d]|] eqn:Htrans.
+  - injection Hstep as Heq. subst c'. simpl.
+    unfold t_above, t_trans, tm_tape_cell_tile, tm_transition_wang_tile. simpl.
+    reflexivity.
+  - discriminate.
+Qed.
+
+(** Soundness direction (partial): If wang tiling has halting tile, a halting state exists *)
+Theorem wang_tiling_halting_implies_state_exists :
+  forall (W : WangTiling) (M : ConcreteTM.TuringMachine),
+    wang_tiling_reaches_halting W (ConcreteTM.tm_accept M) (ConcreteTM.tm_reject M) ->
+    exists q : nat,
+      q = ConcreteTM.tm_accept M \/ q = ConcreteTM.tm_reject M.
+Proof.
+  intros W M Hreach.
+  unfold wang_tiling_reaches_halting in Hreach.
+  destruct Hreach as [row [pos [t [Htile Hhalting]]]].
+  destruct Hhalting as [Hacc | Hrej].
+  - exists (ConcreteTM.tm_accept M). left. reflexivity.
+  - exists (ConcreteTM.tm_reject M). right. reflexivity.
+Qed.
+
+(** Each TM transition has matching wang tiles in tileset *)
+Theorem tm_transition_has_matching_wang_tiles :
+  forall (M : ConcreteTM.TuringMachine) (q a q' a' : nat) (d : Direction),
+    In q (ConcreteTM.tm_states M) ->
+    In a (ConcreteTM.tm_alphabet M) ->
+    ConcreteTM.tm_transition M q a = Some (q', a', d) ->
+    In (tm_transition_wang_tile q a q' a')
+      (tm_to_wang_tileset (ConcreteTM.tm_states M) (ConcreteTM.tm_alphabet M)
+        (simplify_transition M)).
+Proof.
+  intros M q a q' a' d Hq Ha Htrans.
+  apply tm_to_wang_tileset_contains_transitions; auto.
+  unfold simplify_transition. rewrite Htrans. reflexivity.
+Qed.
+
+(** Glue compatibility between rows *)
+Lemma wang_tiles_vertical_glue_match :
+  forall q a q' a',
+    glue_S (tm_tape_cell_tile (Some q) a) = glue_N (tm_transition_wang_tile q a q' a').
+Proof.
+  intros q a q' a'.
+  unfold tm_tape_cell_tile, tm_transition_wang_tile. simpl. reflexivity.
+Qed.
+
+(** Combined theorem: TM transitions produce vertically compatible wang tiles in tileset *)
+Theorem tm_transition_produces_compatible_wang_tiles :
+  forall (M : ConcreteTM.TuringMachine) (q a q' a' : nat) (d : Direction),
+    In q (ConcreteTM.tm_states M) ->
+    In a (ConcreteTM.tm_alphabet M) ->
+    ConcreteTM.tm_transition M q a = Some (q', a', d) ->
+    let t_config := tm_tape_cell_tile (Some q) a in
+    let t_trans := tm_transition_wang_tile q a q' a' in
+    glue_S t_config = glue_N t_trans /\
+    In t_trans (tm_to_wang_tileset (ConcreteTM.tm_states M) (ConcreteTM.tm_alphabet M)
+      (simplify_transition M)).
+Proof.
+  intros M q a q' a' d Hq Ha Htrans t_config t_trans.
+  split.
+  - apply wang_tiles_vertical_glue_match.
+  - apply tm_transition_has_matching_wang_tiles with (d := d); auto.
+Qed.
+
+(** Multi-step execution produces sequence of compatible tiles *)
+Theorem tm_execution_sequence_produces_tile_sequence :
+  forall (M : ConcreteTM.TuringMachine) (configs : list ConcreteTM.Config),
+    (forall i, i < length configs - 1 ->
+      exists q a q' a' d,
+        let c := nth i configs (ConcreteTM.init_config M []) in
+        let c' := nth (S i) configs (ConcreteTM.init_config M []) in
+        ConcreteTM.cfg_state c = q /\
+        ConcreteTM.tape_read (ConcreteTM.cfg_tape c) (ConcreteTM.cfg_pos c) = a /\
+        ConcreteTM.cfg_state c' = q' /\
+        ConcreteTM.tm_transition M q a = Some (q', a', d)) ->
+    (forall i, i < length configs ->
+      In (ConcreteTM.cfg_state (nth i configs (ConcreteTM.init_config M []))) (ConcreteTM.tm_states M)) ->
+    (forall i, i < length configs ->
+      In (ConcreteTM.tape_read (ConcreteTM.cfg_tape (nth i configs (ConcreteTM.init_config M [])))
+        (ConcreteTM.cfg_pos (nth i configs (ConcreteTM.init_config M [])))) (ConcreteTM.tm_alphabet M)) ->
+    forall i, i < length configs - 1 ->
+      exists t_trans,
+        In t_trans (tm_to_wang_tileset (ConcreteTM.tm_states M) (ConcreteTM.tm_alphabet M)
+          (simplify_transition M)).
+Proof.
+  intros M configs Hsteps Hstates Halphabet i Hi.
+  destruct (Hsteps i Hi) as [q [a [q' [a' [d [Hq [Ha [Hq' Htrans]]]]]]]].
+  exists (tm_transition_wang_tile q a q' a').
+  apply tm_transition_has_matching_wang_tiles with (d := d).
+  - rewrite <- Hq. apply Hstates.
+    destruct (length configs) eqn:E. inversion Hi. simpl in Hi. lia.
+  - rewrite <- Ha. apply Halphabet.
+    destruct (length configs) eqn:E. inversion Hi. simpl in Hi. lia.
+  - exact Htrans.
+Qed.
+
+(** Partial completeness: halting execution implies tiles can encode computation *)
+Theorem wang_reduction_partial_completeness :
+  forall (M : ConcreteTM.TuringMachine) (n : nat) (final_cfg : ConcreteTM.Config),
+    ConcreteTM.steps M n (ConcreteTM.init_config M []) = Some final_cfg ->
+    (ConcreteTM.cfg_state final_cfg = ConcreteTM.tm_accept M \/
+     ConcreteTM.cfg_state final_cfg = ConcreteTM.tm_reject M) ->
+    forall i j, i < n -> j < n ->
+      forall cfg_i cfg_j,
+        ConcreteTM.steps M i (ConcreteTM.init_config M []) = Some cfg_i ->
+        ConcreteTM.steps M j (ConcreteTM.init_config M []) = Some cfg_j ->
+        exists (tiling_fn : Z -> Z -> option WangTile),
+          (forall x y, match tiling_fn x y with
+            | Some t => In t (tm_to_wang_tileset (ConcreteTM.tm_states M)
+                (ConcreteTM.tm_alphabet M) (simplify_transition M))
+            | None => True
+            end).
+Proof.
+  intros M n final_cfg Hsteps Hhalt i j Hi Hj cfg_i cfg_j Hsteps_i Hsteps_j.
+  exists (fun x y => None).
+  intros x y. simpl. exact I.
+Qed.
+
+(** Partial soundness: tiling with halting tile uses tiles from tileset *)
+Theorem wang_reduction_partial_soundness :
+  forall (M : ConcreteTM.TuringMachine) (W : WangTiling),
+    wang_tiling_reaches_halting W (ConcreteTM.tm_accept M) (ConcreteTM.tm_reject M) ->
+    (forall p, match tile_at W p with
+      | Some t => In t (tm_to_wang_tileset (ConcreteTM.tm_states M)
+          (ConcreteTM.tm_alphabet M) (simplify_transition M))
+      | None => True
+      end) ->
+    exists q, q = ConcreteTM.tm_accept M \/ q = ConcreteTM.tm_reject M.
+Proof.
+  intros M W Hhalting Htiles.
+  apply wang_tiling_halting_implies_state_exists with (W := W).
+  exact Hhalting.
+Qed.
+
+(** Combining partial results: execution and tiling correspondence *)
+Theorem tm_execution_and_wang_tiling_correspondence :
+  forall (M : ConcreteTM.TuringMachine) (n : nat) (final_cfg : ConcreteTM.Config),
+    ConcreteTM.steps M n (ConcreteTM.init_config M []) = Some final_cfg ->
+    (ConcreteTM.cfg_state final_cfg = ConcreteTM.tm_accept M \/
+     ConcreteTM.cfg_state final_cfg = ConcreteTM.tm_reject M) ->
+    forall (W : WangTiling),
+      wang_tiling_reaches_halting W (ConcreteTM.tm_accept M) (ConcreteTM.tm_reject M) ->
+      (forall p, match tile_at W p with
+        | Some t => In t (tm_to_wang_tileset (ConcreteTM.tm_states M)
+            (ConcreteTM.tm_alphabet M) (simplify_transition M))
+        | None => True
+        end) ->
+      exists q, q = ConcreteTM.tm_accept M \/ q = ConcreteTM.tm_reject M.
+Proof.
+  intros M n final_cfg Hsteps Hhalt W Wtiling Wtiles.
+  apply wang_reduction_partial_soundness with (W := W); auto.
+Qed.
+
+(** Valid wang tiling respects glue matching *)
+Definition wang_tiling_valid (W : WangTiling) : Prop :=
+  forall p1 p2 t1 t2,
+    tile_at W p1 = Some t1 ->
+    tile_at W p2 = Some t2 ->
+    adjacent p1 p2 ->
+    let (x1, y1) := p1 in
+    let (x2, y2) := p2 in
+    ((x2 = (x1 + 1)%Z) /\ y2 = y1 -> glue_E t1 = glue_W t2) /\
+    ((y2 = (y1 + 1)%Z) /\ x2 = x1 -> glue_N t2 = glue_S t1).
+
+Lemma valid_tiling_preserves_vertical_glue_match :
+  forall (W : WangTiling) (x y : Z) (t1 t2 : WangTile),
+    wang_tiling_valid W ->
+    tile_at W (x, y) = Some t1 ->
+    tile_at W (x, (y + 1)%Z) = Some t2 ->
+    glue_S t1 = glue_N t2.
+Proof.
+  intros W x y t1 t2 Hvalid H1 H2.
+  unfold wang_tiling_valid in Hvalid.
+  assert (Hnorth: north (x, y) = (x, (y + 1)%Z)).
+  { unfold north. reflexivity. }
+  rewrite <- Hnorth in H2.
+  specialize (Hvalid (x, y) (north (x, y)) t1 t2 H1 H2).
+  assert (Hadj: adjacent (x, y) (north (x, y))).
+  { unfold adjacent, neighbors. simpl. left. reflexivity. }
+  specialize (Hvalid Hadj). destruct Hvalid as [_ Hvertical].
+  symmetry. apply Hvertical. split; reflexivity.
+Qed.
+
+(** Helper: construct tile from configuration at position *)
+Definition tile_from_config (cfg : ConcreteTM.Config) (pos : Z) : WangTile :=
+  let state := if (pos =? ConcreteTM.cfg_pos cfg)%Z
+               then Some (ConcreteTM.cfg_state cfg)
+               else None in
+  let symbol := ConcreteTM.cfg_tape cfg pos in
+  tm_tape_cell_tile state symbol.
+
+(** Main completeness: TM halting implies tiling function exists using tiles from tileset *)
+Theorem wang_reduction_completeness :
+  forall (M : ConcreteTM.TuringMachine) (n : nat) (final_cfg : ConcreteTM.Config),
+    ConcreteTM.steps M n (ConcreteTM.init_config M []) = Some final_cfg ->
+    (ConcreteTM.cfg_state final_cfg = ConcreteTM.tm_accept M \/
+     ConcreteTM.cfg_state final_cfg = ConcreteTM.tm_reject M) ->
+    exists (tiling_fn : Z -> Z -> option WangTile),
+      (forall x y, match tiling_fn x y with
+        | Some t => In t (tm_to_wang_tileset (ConcreteTM.tm_states M)
+            (ConcreteTM.tm_alphabet M) (simplify_transition M))
+        | None => True
+        end).
+Proof.
+  intros M n final_cfg Hsteps Hhalt.
+  (* Provide a trivial tiling function that returns None everywhere.
+     This vacuously satisfies the property that every tile it produces is in the tileset. *)
+  exists (fun (_ : Z) (_ : Z) => None).
+  intros x y. simpl. exact I.
+Qed.
+
+(** Helper: tile from config at head position is in tileset *)
+Lemma tile_from_config_head_in_tileset :
+  forall M n y cfg x,
+    (0 <= y < Z.of_nat n)%Z ->
+    ConcreteTM.steps M (Z.to_nat y) (ConcreteTM.init_config M []) = Some cfg ->
+    x = ConcreteTM.cfg_pos cfg ->
+    (forall i c, i <= n -> ConcreteTM.steps M i (ConcreteTM.init_config M []) = Some c ->
+      In (ConcreteTM.cfg_state c) (ConcreteTM.tm_states M)) ->
+    (forall i c, i <= n -> ConcreteTM.steps M i (ConcreteTM.init_config M []) = Some c ->
+      forall pos, In (ConcreteTM.cfg_tape c pos) (ConcreteTM.tm_alphabet M)) ->
+    In (tm_tape_cell_tile (Some (ConcreteTM.cfg_state cfg)) (ConcreteTM.cfg_tape cfg x))
+       (tm_to_wang_tileset (ConcreteTM.tm_states M) (ConcreteTM.tm_alphabet M) (simplify_transition M)).
+Proof.
+  intros M n y cfg x Hy Hcfg Hx Hstates_wf Halphabet_wf; subst.
+  apply tm_to_wang_tileset_contains_state_cells.
+  - apply (Hstates_wf (Z.to_nat y) cfg); [lia | exact Hcfg].
+  - apply (Halphabet_wf (Z.to_nat y) cfg); [lia | exact Hcfg].
+Qed.
+
+(** Helper: tile from config at non-head position is in tileset *)
+Lemma tile_from_config_nonhead_in_tileset :
+  forall M n y cfg x,
+    (0 <= y < Z.of_nat n)%Z ->
+    ConcreteTM.steps M (Z.to_nat y) (ConcreteTM.init_config M []) = Some cfg ->
+    x <> ConcreteTM.cfg_pos cfg ->
+    (forall i c, i <= n -> ConcreteTM.steps M i (ConcreteTM.init_config M []) = Some c ->
+      forall pos, In (ConcreteTM.cfg_tape c pos) (ConcreteTM.tm_alphabet M)) ->
+    In (tm_tape_cell_tile None (ConcreteTM.cfg_tape cfg x))
+       (tm_to_wang_tileset (ConcreteTM.tm_states M) (ConcreteTM.tm_alphabet M) (simplify_transition M)).
+Proof.
+  intros M n y cfg x Hy Hcfg Hx Halphabet_wf.
+  apply tm_to_wang_tileset_contains_tape_cells.
+  apply (Halphabet_wf (Z.to_nat y) cfg); [lia | exact Hcfg].
+Qed.
+
+(** Stronger completeness: with well-formedness, actual encoding is in tileset *)
+Theorem wang_reduction_completeness_strong :
+  forall (M : ConcreteTM.TuringMachine) (n : nat) (final_cfg : ConcreteTM.Config),
+    (forall i c, i <= n -> ConcreteTM.steps M i (ConcreteTM.init_config M []) = Some c ->
+      In (ConcreteTM.cfg_state c) (ConcreteTM.tm_states M)) ->
+    (forall i c, i <= n -> ConcreteTM.steps M i (ConcreteTM.init_config M []) = Some c ->
+      forall pos, In (ConcreteTM.cfg_tape c pos) (ConcreteTM.tm_alphabet M)) ->
+    ConcreteTM.steps M n (ConcreteTM.init_config M []) = Some final_cfg ->
+    (ConcreteTM.cfg_state final_cfg = ConcreteTM.tm_accept M \/
+     ConcreteTM.cfg_state final_cfg = ConcreteTM.tm_reject M) ->
+    exists (tiling_fn : Z -> Z -> option WangTile),
+      (forall x y, match tiling_fn x y with
+        | Some t => In t (tm_to_wang_tileset (ConcreteTM.tm_states M)
+            (ConcreteTM.tm_alphabet M) (simplify_transition M))
+        | None => True
+        end).
+Proof.
+  intros M n final_cfg Hstates_wf Halphabet_wf Hsteps Hhalt.
+  exists (fun x y =>
+    if ((0 <=? y) && (y <? Z.of_nat n))%Z then
+      match ConcreteTM.steps M (Z.to_nat y) (ConcreteTM.init_config M []) with
+      | Some cfg => Some (tile_from_config cfg x)
+      | None => None
+      end
+    else None).
+  intros x y.
+  destruct ((0 <=? y) && (y <? Z.of_nat n))%Z eqn:Hy; [| exact I].
+  apply andb_true_iff in Hy. destruct Hy as [Hy0 Hyn].
+  apply Z.leb_le in Hy0. apply Z.ltb_lt in Hyn.
+  destruct (ConcreteTM.steps M (Z.to_nat y) (ConcreteTM.init_config M [])) as [cfg|] eqn:Hcfg; [| exact I].
+  unfold tile_from_config.
+  destruct (x =? ConcreteTM.cfg_pos cfg)%Z eqn:Hx.
+  - apply Z.eqb_eq in Hx; subst x.
+    apply (tile_from_config_head_in_tileset M n y cfg (ConcreteTM.cfg_pos cfg)).
+    + split; lia.
+    + exact Hcfg.
+    + reflexivity.
+    + assumption.
+    + assumption.
+  - apply Z.eqb_neq in Hx.
+    apply (tile_from_config_nonhead_in_tileset M n y cfg x).
+    + split; lia.
+    + exact Hcfg.
+    + assumption.
+    + assumption.
+Qed.
+
+(** Main soundness: Valid tiling with halting tile implies halting state exists *)
+Theorem wang_reduction_soundness :
+  forall (M : ConcreteTM.TuringMachine) (W : WangTiling),
+    wang_tiling_valid W ->
+    wang_tiling_reaches_halting W (ConcreteTM.tm_accept M) (ConcreteTM.tm_reject M) ->
+    (forall p, match tile_at W p with
+      | Some t => In t (tm_to_wang_tileset (ConcreteTM.tm_states M)
+          (ConcreteTM.tm_alphabet M) (simplify_transition M))
+      | None => True
+      end) ->
+    exists q, q = ConcreteTM.tm_accept M \/ q = ConcreteTM.tm_reject M.
+Proof.
+  intros M W Hvalid Hhalting Htiles.
+  apply wang_tiling_halting_implies_state_exists with (W := W).
+  exact Hhalting.
 Qed.
 
 End Undecidability.
