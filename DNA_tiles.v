@@ -6378,6 +6378,99 @@ Proof.
       simpl. constructor.
 Qed.
 
+Lemma lift_north_implies_binding_ge_1 :
+  forall (S : TAS) (t t_n : TileType) (β : Assembly) (p : Position) (k : nat),
+    β (north p) = Some t_n ->
+    neighbor_binding (tas_glue_strength S) t β p (north p) >= 1 ->
+    binding_strength univ_glue_strength
+      (univtile_to_tiletype (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
+                                        (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)))
+      (lift_assembly β k) p >= 1.
+Proof.
+  intros S t t_n β p k Ht_n Hbind_n.
+  pose proof (neighbor_contribution_lift_north S t t_n β p k Ht_n Hbind_n) as H.
+  unfold binding_strength, neighbors. simpl. lia.
+Qed.
+
+Lemma lift_east_implies_binding_ge_1 :
+  forall (S : TAS) (t t_e : TileType) (β : Assembly) (p : Position) (k : nat),
+    β (east p) = Some t_e ->
+    neighbor_binding (tas_glue_strength S) t β p (east p) >= 1 ->
+    binding_strength univ_glue_strength
+      (univtile_to_tiletype (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
+                                        (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)))
+      (lift_assembly β k) p >= 1.
+Proof.
+  intros S t t_e β p k Ht_e Hbind_e.
+  pose proof (neighbor_contribution_lift_east S t t_e β p k Ht_e Hbind_e) as H.
+  unfold binding_strength, neighbors. simpl. lia.
+Qed.
+
+Lemma lift_south_implies_binding_ge_1 :
+  forall (S : TAS) (t t_s : TileType) (β : Assembly) (p : Position) (k : nat),
+    β (south p) = Some t_s ->
+    neighbor_binding (tas_glue_strength S) t β p (south p) >= 1 ->
+    binding_strength univ_glue_strength
+      (univtile_to_tiletype (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
+                                        (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)))
+      (lift_assembly β k) p >= 1.
+Proof.
+  intros S t t_s β p k Ht_s Hbind_s.
+  pose proof (neighbor_contribution_lift_south S t t_s β p k Ht_s Hbind_s) as H.
+  unfold binding_strength, neighbors. simpl. lia.
+Qed.
+
+Lemma lift_west_implies_binding_ge_1 :
+  forall (S : TAS) (t t_w : TileType) (β : Assembly) (p : Position) (k : nat),
+    β (west p) = Some t_w ->
+    neighbor_binding (tas_glue_strength S) t β p (west p) >= 1 ->
+    binding_strength univ_glue_strength
+      (univtile_to_tiletype (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
+                                        (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)))
+      (lift_assembly β k) p >= 1.
+Proof.
+  intros S t t_w β p k Ht_w Hbind_w.
+  pose proof (neighbor_contribution_lift_west S t t_w β p k Ht_w Hbind_w) as H.
+  unfold binding_strength, neighbors. simpl. lia.
+Qed.
+
+Theorem lift_preserves_any_neighbor_contribution :
+  forall (S : TAS) (t : TileType) (β : Assembly) (p : Position) (k : nat),
+    (exists t_n, β (north p) = Some t_n /\ neighbor_binding (tas_glue_strength S) t β p (north p) >= 1) \/
+    (exists t_e, β (east p) = Some t_e /\ neighbor_binding (tas_glue_strength S) t β p (east p) >= 1) \/
+    (exists t_s, β (south p) = Some t_s /\ neighbor_binding (tas_glue_strength S) t β p (south p) >= 1) \/
+    (exists t_w, β (west p) = Some t_w /\ neighbor_binding (tas_glue_strength S) t β p (west p) >= 1) ->
+    binding_strength univ_glue_strength
+      (univtile_to_tiletype (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
+                                        (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)))
+      (lift_assembly β k) p >= 1.
+Proof.
+  intros S t β p k [Hn | [He | [Hs | Hw]]].
+  - destruct Hn as [t_n [Ht_n Hbind]]. eapply lift_north_implies_binding_ge_1; eauto.
+  - destruct He as [t_e [Ht_e Hbind]]. eapply lift_east_implies_binding_ge_1; eauto.
+  - destruct Hs as [t_s [Ht_s Hbind]]. eapply lift_south_implies_binding_ge_1; eauto.
+  - destruct Hw as [t_w [Ht_w Hbind]]. eapply lift_west_implies_binding_ge_1; eauto.
+Qed.
+
+Corollary lift_preserves_all_neighbor_directions :
+  forall (S : TAS) (t : TileType) (β : Assembly) (p : Position) (k : nat),
+    (exists t_n, β (north p) = Some t_n /\ neighbor_binding (tas_glue_strength S) t β p (north p) >= 1) ->
+    (exists t_e, β (east p) = Some t_e /\ neighbor_binding (tas_glue_strength S) t β p (east p) >= 1) ->
+    (exists t_s, β (south p) = Some t_s /\ neighbor_binding (tas_glue_strength S) t β p (south p) >= 1) ->
+    (exists t_w, β (west p) = Some t_w /\ neighbor_binding (tas_glue_strength S) t β p (west p) >= 1) ->
+    binding_strength univ_glue_strength
+      (univtile_to_tiletype (mkUnivTile (UG_Data (glue_N t)) (UG_Data (glue_E t))
+                                        (UG_Data (glue_S t)) (UG_Data (glue_W t)) (Some t)))
+      (lift_assembly β k) p >= 4.
+Proof.
+  intros S t β p k [t_n [Ht_n Hbn]] [t_e [Ht_e Hbe]] [t_s [Ht_s Hbs]] [t_w [Ht_w Hbw]].
+  assert (Hn := neighbor_contribution_lift_north S t t_n β p k Ht_n Hbn).
+  assert (He := neighbor_contribution_lift_east S t t_e β p k Ht_e Hbe).
+  assert (Hs := neighbor_contribution_lift_south S t t_s β p k Ht_s Hbs).
+  assert (Hw := neighbor_contribution_lift_west S t t_w β p k Ht_w Hbw).
+  unfold binding_strength, neighbors. simpl. lia.
+Qed.
+
 (** * Undecidability Results *)
 
 Definition halting_decidable : Prop :=
