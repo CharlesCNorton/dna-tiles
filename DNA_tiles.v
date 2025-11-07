@@ -5059,6 +5059,12 @@ Lemma z_match_self : forall z : Z,
   (match z with | 0%Z => 0%Z | Z.pos y' => Z.pos y' | Z.neg y' => Z.neg y' end) = z.
 Proof. intros. destruct z; reflexivity. Qed.
 
+Lemma scale_pos_preserves_origin : forall k : nat,
+  k > 0 -> scale_pos k (0, 0)%Z = (0, 0)%Z.
+Proof.
+  intros k Hk. unfold scale_pos. simpl. f_equal; apply Z.mul_0_r.
+Qed.
+
 Lemma lift_assembly_simulates :
   forall (S : TAS) (β : Assembly),
     (forall p t, β p = Some t -> tile_in_set t (tas_tiles S)) ->
@@ -5670,7 +5676,9 @@ Record TileTypeRG := mkTileRG {
 
 Definition rg_glue_strength (g1 g2 : GlueType) : SignedStrength :=
   if Nat.eqb g1 g2 then
-    if Nat.eqb g1 0 then 0%Z else 1%Z
+    if Nat.eqb g1 0 then 0%Z
+    else if Nat.odd g1 then (-1)%Z
+    else 1%Z
   else 0%Z.
 
 Lemma rg_strength_symmetric :
@@ -5711,17 +5719,22 @@ Proof.
   - simpl. f_equal. apply IH.
 Qed.
 
-Theorem rg_glue_strength_nonnegative :
+Theorem rg_glue_strength_characterization :
   forall g1 g2,
-    (0%Z <= rg_glue_strength g1 g2)%Z.
+    g1 = g2 ->
+    (g1 = 0 -> rg_glue_strength g1 g2 = 0%Z) /\
+    (g1 <> 0 -> Nat.odd g1 = true -> rg_glue_strength g1 g2 = (-1)%Z) /\
+    (g1 <> 0 -> Nat.odd g1 = false -> rg_glue_strength g1 g2 = 1%Z).
 Proof.
-  intros g1 g2.
-  unfold rg_glue_strength.
-  destruct (Nat.eqb g1 g2) eqn:Heq.
-  - destruct (Nat.eqb g1 0) eqn:Hz.
-    + simpl. apply Z.le_refl.
-    + simpl. unfold Z.le. simpl. discriminate.
-  - simpl. apply Z.le_refl.
+  intros g1 g2 Heq. subst.
+  split; [| split].
+  - intro Hz. unfold rg_glue_strength. rewrite Nat.eqb_refl. rewrite Hz. rewrite Nat.eqb_refl. reflexivity.
+  - intros Hnz Hodd. unfold rg_glue_strength. rewrite Nat.eqb_refl.
+    destruct (Nat.eqb g2 0) eqn:H0; [apply Nat.eqb_eq in H0; contradiction |].
+    rewrite Hodd. reflexivity.
+  - intros Hnz Heven. unfold rg_glue_strength. rewrite Nat.eqb_refl.
+    destruct (Nat.eqb g2 0) eqn:H0; [apply Nat.eqb_eq in H0; contradiction |].
+    rewrite Heven. reflexivity.
 Qed.
 
 Theorem rg_tm_state_encoding :
