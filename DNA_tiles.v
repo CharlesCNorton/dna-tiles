@@ -2789,30 +2789,9 @@ Proof.
   exact Hpos.
 Defined.
 
-Eval compute in (binding_strength
-  (fun g => match g with 0 => 0 | _ => 1 end)
-  competing_tile_1
-  (fun p => if pos_eq p (0, 0)%Z then Some seed_tile_conflict else None)
-  (1, 0)%Z).
-
-Eval compute in (binding_strength
-  (fun g => match g with 0 => 0 | _ => 1 end)
-  competing_tile_2
-  (fun p => if pos_eq p (0, 0)%Z then Some seed_tile_conflict else None)
-  (1, 0)%Z).
-
-Eval compute in (TileType_eq_dec competing_tile_1 competing_tile_2).
-
 Definition assembly_step_0 := tas_seed tas_simple.
 Definition assembly_step_1 := place_tile assembly_step_0 tile_horizontal (1, 0)%Z.
 Definition assembly_step_2 := place_tile assembly_step_1 tile_horizontal (2, 0)%Z.
-
-Eval compute in (tile_at assembly_step_0 (0, 0)%Z).
-Eval compute in (tile_at assembly_step_1 (1, 0)%Z).
-Eval compute in (tile_at assembly_step_2 (2, 0)%Z).
-
-Eval compute in (binding_strength example_strength_fn tile_horizontal assembly_step_0 (1, 0)%Z).
-Eval compute in (binding_strength example_strength_fn tile_horizontal assembly_step_1 (2, 0)%Z).
 
 Fixpoint filter_attachable
   (strength_fn : GlueType -> nat)
@@ -2843,22 +2822,8 @@ Definition find_attachable_tiles
   : list (TileType * Position) :=
   filter_attachable (tas_glue_strength tas) (tas_tiles tas) α positions (tas_temp tas).
 
-Eval compute in (find_attachable_tiles tas_simple assembly_step_0
-  [(0, 0)%Z; (1, 0)%Z; (0, 1)%Z; (-1, 0)%Z; (0, -1)%Z]).
-
-Eval compute in (find_attachable_tiles tas_simple assembly_step_1
-  [(0, 0)%Z; (1, 0)%Z; (2, 0)%Z; (0, 1)%Z; (1, 1)%Z]).
-
 Definition tas_temp1 : TAS :=
   mkTAS tileset_simple example_strength_fn seed_single 1.
-
-Eval compute in (find_attachable_tiles tas_temp1 assembly_step_0
-  [(0, 0)%Z; (1, 0)%Z; (0, 1)%Z; (-1, 0)%Z; (0, -1)%Z]).
-
-Eval compute in (is_occupied assembly_step_0 (0, 0)%Z).
-Eval compute in (is_occupied assembly_step_0 (1, 0)%Z).
-
-Eval compute in (can_attach_dec example_strength_fn tile_horizontal assembly_step_0 (1, 0)%Z 1 []).
 
 (** ** Complexity of Verifying Determinism *)
 
@@ -3570,10 +3535,6 @@ Definition incrementer : TuringMachine :=
     0
     1
     2.
-
-Eval compute in (init_config incrementer [1; 1; 1]).
-Eval compute in (step incrementer (init_config incrementer [1; 1; 1])).
-Eval compute in (steps incrementer 10 (init_config incrementer [1; 1; 1])).
 
 (** Test that negative positions correctly get blank *)
 Lemma init_config_negative_positions_blank :
