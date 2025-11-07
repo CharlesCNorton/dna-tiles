@@ -2727,7 +2727,7 @@ Proof.
   apply tm_to_wang_tileset_contains_transitions; auto.
 Qed.
 
-Corollary tileset_encoding_complete :
+Corollary wang_tileset_contains_all_tape_cells :
   forall states alphabet transition,
     let tileset := tm_to_wang_tileset states alphabet transition in
     (forall a, In a alphabet -> In (tm_tape_cell_tile None a) tileset) /\
@@ -3485,7 +3485,7 @@ Proof.
   specialize (Henc a). lia.
 Qed.
 
-Theorem turing_completeness_at_temperature_2 :
+Theorem tm_step_has_corresponding_tile_at_temp_2 :
   forall (M : @TuringMachine State TapeSymbol) seed_asm,
     (forall q a, In q (tm_states M) -> In a (tm_alphabet M) ->
       exists q' a' d, tm_transition M q a = Some (q', a', d) \/ tm_transition M q a = None) ->
@@ -3511,7 +3511,7 @@ Proof.
   apply (tm_step_tile_correspondence M c c' (fun _ => 1) (fun _ => 2) Hstate Hsym Hstep).
 Qed.
 
-Theorem turing_completeness_multistep :
+Theorem tm_multistep_has_tiles_for_each_step :
   forall (M : @TuringMachine State TapeSymbol) seed_asm c c',
     (forall q a, In q (tm_states M) -> In a (tm_alphabet M) ->
       exists q' a' d, tm_transition M q a = Some (q', a', d) \/ tm_transition M q a = None) ->
@@ -3540,7 +3540,7 @@ Proof.
   - exact Hstep.
 Qed.
 
-Theorem turing_completeness_simulation_soundness :
+Theorem tm_execution_has_tiles_for_all_steps :
   forall (M : @TuringMachine State TapeSymbol) start_config final_config,
     (forall q, In q (tm_states M)) ->
     (forall a, In a (tm_alphabet M)) ->
@@ -3754,7 +3754,7 @@ Proof.
     repeat split; unfold encode_glue; reflexivity.
 Qed.
 
-Theorem turing_completeness_at_temp_2_complete :
+Theorem tm_to_tas_generates_tiles_for_execution :
   forall (M : @TuringMachine State TapeSymbol),
     (forall q, In q (tm_states M)) ->
     (forall a, In a (tm_alphabet M)) ->
@@ -3786,7 +3786,7 @@ Proof.
   - discriminate.
 Qed.
 
-Corollary tas_temperature_2_turing_complete :
+Corollary tm_to_tas_temp_2_has_tiles_for_all_transitions :
   forall (M : @TuringMachine State TapeSymbol),
     (forall q, In q (tm_states M)) ->
     (forall a, In a (tm_alphabet M)) ->
@@ -3816,7 +3816,7 @@ Proof.
 Qed.
 
 (** Section 2.1: Turing completeness at temperature 2 with tile complexity O(|Q|·|Γ|) *)
-Theorem section_2_1_turing_completeness_temperature_2_COMPLETE :
+Theorem tm_to_tas_temp_2_exists_with_transition_tiles_and_cooperation :
   forall (M : @TuringMachine State TapeSymbol),
     (forall q, In q (tm_states M)) ->
     (forall a, In a (tm_alphabet M)) ->
@@ -3956,7 +3956,7 @@ Proof.
   - apply tm_to_tas_has_temp_2.
 Qed.
 
-Theorem cooperation_necessary_for_turing_completeness :
+Theorem tm_to_tas_temp_2_requires_cooperation :
   forall State TapeSymbol (M : @TuringMachine State TapeSymbol) seed_asm,
     tas_temp (tm_to_tas M seed_asm (fun _ => 1) (fun _ => 2)) = 2 /\
     (forall g1 g2, g1 <> 0 -> g2 <> 0 ->
@@ -4169,7 +4169,7 @@ Proof.
 Qed.
 
 (** Rule 110 correctly encodes all transitions *)
-Theorem rule110_transition_completeness :
+Theorem rule110_tileset_contains_all_transitions :
   forall left current right : bool,
     exists t,
       In t rule110_tileset /\
@@ -4199,7 +4199,7 @@ Proof.
   unfold rule110_tas. simpl. lia.
 Qed.
 
-Theorem section_2_1_complete :
+Theorem rule110_tas_exists_with_8_tiles_at_temp_2 :
   exists (tas : TAS),
     tas_temp tas = 2 /\
     length (tas_tiles tas) = 8 /\
@@ -4212,7 +4212,7 @@ Proof.
   split. apply rule110_has_temp_2.
   split. apply rule110_tile_count.
   intros left current right.
-  assert (H := rule110_transition_completeness left current right).
+  assert (H := rule110_tileset_contains_all_transitions left current right).
   destruct H as [t [Hin [_ [_ [_ Hglue]]]]].
   exists t. split. exact Hin. exact Hglue.
 Qed.
@@ -5192,7 +5192,7 @@ Qed.
 Lemma one_neq_zero : 1 <> 0.
 Proof. discriminate. Qed.
 
-Theorem section_2_2_intrinsic_universality_COMPLETE :
+Theorem universal_tileset_simulation_relation_exists_for_temp_2 :
   forall (S : TAS),
     tas_temp S = 2 ->
     (forall p' t', tas_seed S p' = Some t' -> tile_in_set t' (tas_tiles S)) ->
