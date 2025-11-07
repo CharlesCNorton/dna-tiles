@@ -1484,8 +1484,67 @@ Proof.
   exact (IH Hprod τ Hγ1τ).
 Qed.
 
+(** Bounded strong confluence: for locally deterministic TAS,
+    the joining paths have length ≤ 1 *)
+Lemma locally_det_bounded_confluence :
+  forall tas α β γ,
+    locally_deterministic tas ->
+    producible_in tas α ->
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α γ ->
+    β = γ \/ exists δ,
+      (β = δ \/ single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ) /\
+      (γ = δ \/ single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ).
+Proof.
+  intros tas α β γ Hlocal Hprod Hstepβ Hstepγ.
+  destruct Hstepβ as [tβ [pβ [Hinβ [Hattβ Heqβ]]]].
+  destruct Hstepγ as [tγ [pγ [Hinγ [Hattγ Heqγ]]]].
+  destruct (pos_eq pβ pγ) eqn:Hpeq.
+  - (* Same position: tiles must be equal *)
+    apply pos_eq_true_iff in Hpeq. subst pγ.
+    assert (Heqt: tβ = tγ).
+    { eapply locally_det_no_compete; eauto. }
+    subst tγ. left. congruence.
+  - (* Different positions: place both tiles *)
+    apply pos_eq_false_iff in Hpeq.
+    right.
+    exists (place_tile (place_tile α tβ pβ) tγ pγ).
+    split.
+    + (* β = place_tile α tβ pβ can reach δ by placing tγ at pγ *)
+      subst β. right.
+      assert (Hempty: tile_at (place_tile α tβ pβ) pγ = None).
+      { unfold tile_at, place_tile.
+        destruct (pos_eq pγ pβ) eqn:Heq.
+        - apply pos_eq_true_iff in Heq. symmetry in Heq. contradiction.
+        - destruct Hattγ as [Hαempty _]. exact Hαempty. }
+      assert (Hbound: binding_strength (tas_glue_strength tas) tγ (place_tile α tβ pβ) pγ >= tas_temp tas).
+      { destruct Hattγ as [_ Hbnd].
+        apply Nat.le_trans with (m := binding_strength (tas_glue_strength tas) tγ α pγ); auto.
+        apply binding_strength_monotonic.
+        apply place_tile_extends. destruct Hattβ as [Hempty' _]. exact Hempty'. }
+      exists tγ, pγ. split. exact Hinγ. split.
+      * split; auto.
+      * reflexivity.
+    + (* γ = place_tile α tγ pγ can reach δ by placing tβ at pβ *)
+      subst γ. right.
+      assert (Hempty: tile_at (place_tile α tγ pγ) pβ = None).
+      { unfold tile_at, place_tile.
+        destruct (pos_eq pβ pγ) eqn:Heq.
+        - apply pos_eq_true_iff in Heq. contradiction.
+        - destruct Hattβ as [Hαempty _]. exact Hαempty. }
+      assert (Hbound: binding_strength (tas_glue_strength tas) tβ (place_tile α tγ pγ) pβ >= tas_temp tas).
+      { destruct Hattβ as [_ Hbnd].
+        apply Nat.le_trans with (m := binding_strength (tas_glue_strength tas) tβ α pβ); auto.
+        apply binding_strength_monotonic.
+        apply place_tile_extends. destruct Hattγ as [Hempty' _]. exact Hempty'. }
+      exists tβ, pβ. split. exact Hinβ. split.
+      * split; auto.
+      * extensionality p. apply eq_sym. apply place_tile_comm_at. intro H. apply Hpeq. symmetry. exact H.
+Qed.
+
 Lemma strip_one_multi :
   forall tas α β γ,
+    locally_deterministic tas ->
     strongly_confluent tas ->
     producible_in tas α ->
     single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
@@ -1494,19 +1553,50 @@ Lemma strip_one_multi :
       multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ /\
       multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ.
 Proof.
-  intros tas α β γ Hsc Hprod Hαβ Hαγ.
+  intros tas α β γ Hlocal Hsc Hprod Hαβ Hαγ.
   revert β Hαβ.
-  induction Hαγ as
-      [| α γ1 γ Hαγ1 Hγ1γ IH]; intros β Hαβ.
-  - exists β. split; [apply ms_refl | apply single_to_multi; exact Hαβ].
-  - destruct (single_single_join tas α β γ1 Hsc Hprod Hαβ Hαγ1)
-      as [τ [Hβτ Hγ1τ]].
+  induction Hαγ as [| α γ1 γ Hαγ1 Hγ1γ IH]; intros β Hαβ.
+  - (* Base case: γ = α *)
+    exists β. split; [apply ms_refl | apply single_to_multi; exact Hαβ].
+  - (* Inductive case: α →₁ γ1 →* γ, and α →₁ β *)
     assert (Hprod_γ1 : producible_in tas γ1)
       by (eapply producible_after_single_step; eauto).
-Admitted.
+    (* Use bounded confluence to join β and γ1 *)
+    destruct (locally_det_bounded_confluence tas α β γ1 Hlocal Hprod Hαβ Hαγ1) as [Heq | [τ [[Hβeq | Hβτ] [Hγ1eq | Hγ1τ]]]].
+    + (* Case: β = γ1 *)
+      subst γ1.
+      (* Apply IH: β →₁ ? contradicts, so just transitivity *)
+      exists γ. split; [| apply ms_refl].
+      eapply multi_step_trans.
+      * apply ms_refl.
+      * exact Hγ1γ.
+    + (* Case: β = τ and γ1 = τ, so β = γ1 *)
+      subst τ. subst γ1.
+      exists γ. split; [| apply ms_refl].
+      eapply multi_step_trans; [apply ms_refl | exact Hγ1γ].
+    + (* Case: β = τ and γ1 →₁ τ *)
+      subst τ.
+      (* Apply IH with γ1 →₁ β *)
+      destruct (IH Hprod_γ1 β Hγ1τ) as [δ [Hβδ Hγδ]].
+      exists δ. split; [exact Hβδ | exact Hγδ].
+    + (* Case: β →₁ τ and γ1 = τ *)
+      subst τ.
+      exists γ. split; [| apply ms_refl].
+      eapply multi_step_trans.
+      * eapply ms_step; [exact Hβτ | exact Hγ1γ].
+      * apply ms_refl.
+    + (* Case: β →₁ τ and γ1 →₁ τ *)
+      (* Apply IH with γ1 →₁ τ *)
+      destruct (IH Hprod_γ1 τ Hγ1τ) as [δ [Hτδ Hγδ]].
+      exists δ. split; [| exact Hγδ].
+      eapply multi_step_trans.
+      * eapply ms_step; [exact Hβτ | exact Hτδ].
+      * apply ms_refl.
+Qed.
 
 Theorem diamond_aux_inner :
   forall (tas : TAS) (α β γ : Assembly),
+    locally_deterministic tas ->
     strongly_confluent tas ->
     producible_in tas α ->
     multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
@@ -1515,7 +1605,7 @@ Theorem diamond_aux_inner :
       multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ /\
       multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ.
 Proof.
-  intros tas α β γ Hsc Hprod Hβ Hγ.
+  intros tas α β γ Hlocal Hsc Hprod Hβ Hγ.
   revert γ Hγ.
   induction Hβ as [|α β' β Hαβ' Hβ'β IH].
   - intros γ Hγ.
@@ -1523,7 +1613,7 @@ Proof.
   - intros γ Hγ.
     assert (Hprod_β': producible_in tas β').
     { eapply single_step_preserves_producibility; eauto. }
-    destruct (strip_one_multi tas α β' γ Hsc Hprod Hαβ' Hγ) as [δ1 [Hβ'δ1 Hγδ1]].
+    destruct (strip_one_multi tas α β' γ Hlocal Hsc Hprod Hαβ' Hγ) as [δ1 [Hβ'δ1 Hγδ1]].
     destruct (IH Hprod_β' δ1 Hβ'δ1) as [δ [Hβδ Hδ1δ]].
     exists δ. split.
     + exact Hβδ.
@@ -1532,6 +1622,7 @@ Qed.
 
 Lemma diamond_aux :
   forall tas α β,
+    locally_deterministic tas ->
     strongly_confluent tas ->
     producible_in tas α ->
     multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
@@ -1546,11 +1637,12 @@ Qed.
 
 Theorem strong_confluence_diamond :
   forall tas,
+    locally_deterministic tas ->
     strongly_confluent tas ->
     has_diamond_property tas.
 Proof.
-  intros tas Hsc α β γ Hprodα Hprodβ Hprodγ Hαβ Hαγ.
-  eapply diamond_aux; [exact Hsc | exact Hprodα | exact Hαβ | exact Hαγ].
+  intros tas Hlocal Hsc α β γ Hprodα Hprodβ Hprodγ Hαβ Hαγ.
+  eapply diamond_aux; [exact Hlocal | exact Hsc | exact Hprodα | exact Hαβ | exact Hαγ].
 Qed.
 
 (** ** Examples for Section 1.3 *)
@@ -2097,7 +2189,7 @@ Theorem locally_deterministic_unique_terminal :
     α = β.
 Proof.
   intros tas α β Hlocal Hsc [Hprodα Htermα] [Hprodβ Htermβ].
-  assert (Hdiamond := strong_confluence_diamond tas Hsc).
+  assert (Hdiamond := strong_confluence_diamond tas Hlocal Hsc).
   unfold has_diamond_property in Hdiamond.
   assert (Hexists := Hdiamond (tas_seed tas) α β).
   assert (Hprod_seed: producible_in tas (tas_seed tas)).
@@ -2140,7 +2232,7 @@ Proof.
   { apply locally_det_strong_confluence. exact Hlocal. }
   split. exact Hsc.
   split.
-  - apply strong_confluence_diamond. exact Hsc.
+  - apply strong_confluence_diamond. exact Hlocal. exact Hsc.
   - split.
     + intros α β Hα Hβ.
       eapply locally_deterministic_unique_terminal; eauto.
@@ -2155,7 +2247,7 @@ Proof.
       { apply Huniq. exact Htermβ. }
       subst γ.
       destruct Htermβ as [Hprodβ Htermβ'].
-      assert (Hdiamond := strong_confluence_diamond tas Hsc).
+      assert (Hdiamond := strong_confluence_diamond tas Hlocal Hsc).
       unfold has_diamond_property in Hdiamond.
       assert (Hprod_seed: producible_in tas (tas_seed tas)).
       { unfold producible_in. apply ms_refl. }
@@ -2318,15 +2410,6 @@ Proof.
   apply locally_det_strong_confluence. exact Hlocal.
 Qed.
 
-Corollary diamond_equiv_strong_confluence :
-  forall tas,
-    strongly_confluent tas ->
-    has_diamond_property tas.
-Proof.
-  intros tas Hsc.
-  apply strong_confluence_diamond. exact Hsc.
-Qed.
-
 Corollary local_det_implies_diamond :
   forall tas,
     locally_deterministic tas ->
@@ -2334,8 +2417,9 @@ Corollary local_det_implies_diamond :
 Proof.
   intros tas Hlocal.
   apply strong_confluence_diamond.
-  apply locally_det_strong_confluence.
-  exact Hlocal.
+  - exact Hlocal.
+  - apply locally_det_strong_confluence.
+    exact Hlocal.
 Qed.
 
 Corollary decidable_attachment_finite :
