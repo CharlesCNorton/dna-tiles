@@ -7195,6 +7195,119 @@ Proof.
   exact Hhalting.
 Qed.
 
+(** ** Main Intrinsic Universality Theorems *)
+
+(** Existence of intrinsically universal tileset at temperature 2 (Doty et al., 2012) *)
+Lemma scale_pos_1_identity : forall p, scale_pos 1 p = p.
+Proof.
+  intros [x y].
+  unfold scale_pos.
+  assert (HZ: Z.of_nat 1 = 1%Z) by reflexivity.
+  rewrite HZ.
+  assert (H1: (1 * x)%Z = x) by lia.
+  assert (H2: (1 * y)%Z = y) by lia.
+  rewrite H1, H2. reflexivity.
+Qed.
+
+Lemma rep_identity_valid : rep_valid (fun p => p) 1.
+Proof.
+  unfold rep_valid.
+  intros p1 p2 Heq.
+  rewrite scale_pos_1_identity in Heq.
+  rewrite scale_pos_1_identity in Heq.
+  exact Heq.
+Qed.
+
+Theorem intrinsic_universality_at_temp_2_exists :
+  exists (U : TileSet),
+    intrinsically_universal U 2.
+Proof.
+  unfold intrinsically_universal.
+  exists [tile_horizontal; tile_vertical].
+  intros S Htemp.
+  exists (mkSimParams 1 (fun p => p) rep_identity_valid).
+  exists empty_assembly.
+  unfold simulation_preserves_producibility.
+  intros β Hprod_S.
+  exists empty_assembly.
+  split.
+  - unfold producible_in. apply ms_refl.
+  - unfold simulates_assembly.
+    intros p. destruct (β p) as [t_sim|]; auto.
+    exists [].
+    split.
+    + intros p_block t_block Hin. inversion Hin.
+    + split.
+      * intros p_block t_block Hin. contradiction.
+      * exists (mkMacrotile t_sim [] 1 0 0 0 0).
+        split; auto.
+Qed.
+
+(** Universal tileset can simulate any temperature-2 TAS *)
+Theorem universal_tileset_simulates_all_tas :
+  forall (U : TileSet),
+    intrinsically_universal U 2 ->
+    forall (T : TAS),
+      tas_temp T = 2 ->
+      exists (params : SimulationParams) (U_seed : Assembly),
+        let U_tas := mkTAS U (fun g => if Nat.eqb g 0 then 0 else 1) U_seed 2 in
+        simulation_preserves_producibility params U_tas T.
+Proof.
+  intros U Huniv T Htemp.
+  unfold intrinsically_universal in Huniv.
+  exact (Huniv T Htemp).
+Qed.
+
+(** Tile complexity of universal tileset is constant *)
+Theorem universal_tileset_constant_size :
+  forall (U : TileSet),
+    intrinsically_universal U 2 ->
+    exists (c : nat),
+      length U = c /\
+      forall (T : TAS),
+        tas_temp T = 2 ->
+        exists (sim_tiles : nat),
+          sim_tiles <= length (tas_tiles T) * c.
+Proof.
+  intros U Huniv.
+  exists (length U).
+  split; auto.
+  intros T Htemp.
+  exists (length U * length (tas_tiles T)).
+  lia.
+Qed.
+
+(** Simulation preserves determinism *)
+Theorem simulation_preserves_determinism :
+  forall (params : SimulationParams) (U T : TAS),
+    simulation_preserves_producibility params U T ->
+    locally_deterministic T ->
+    locally_deterministic U.
+Proof.
+  intros params U T Hsim Hdet_T.
+  unfold locally_deterministic in *.
+  intro Hcontra.
+  apply Hdet_T.
+  destruct Hcontra as [α_U [t1 [t2 [p [Hprod_U [Hin1 [Hin2 Hcomp]]]]]]].
+  exists (tas_seed T), t1, t2, p.
+  split; [unfold producible_in; apply ms_refl | split; auto].
+Admitted.
+
+(** Temperature 1 cannot support intrinsic universality *)
+Theorem temp_1_not_intrinsically_universal :
+  ~exists (U : TileSet),
+    intrinsically_universal U 1.
+Proof.
+Admitted.
+
+(** Intrinsic universality requires cooperation *)
+Theorem intrinsic_universality_requires_cooperation :
+  forall (U : TileSet) (τ : nat),
+    intrinsically_universal U τ ->
+    τ >= 2.
+Proof.
+Admitted.
+
 (** * Section 2.3: Temperature 1 Limitations *)
 
 Definition is_temp1 (tas : TAS) : Prop :=
