@@ -438,6 +438,115 @@ Proof.
   specialize (Hterm t p Hin Hempty). lia.
 Qed.
 
+Theorem terminal_assembly_characterization :
+  forall tas α,
+    terminal_assemblies tas α <->
+    (producible_in tas α /\
+     forall t p,
+       tile_in_set t (tas_tiles tas) ->
+       tile_at α p = None ->
+       binding_strength (tas_glue_strength tas) t α p < tas_temp tas).
+Proof.
+  intros tas α.
+  split.
+  - intros [Hprod Hterm]. split; auto.
+  - intros [Hprod Hterm]. split; auto.
+Qed.
+
+Fixpoint count_tiles (α : Assembly) (positions : list Position) : nat :=
+  match positions with
+  | [] => 0
+  | p :: ps =>
+      match α p with
+      | Some _ => S (count_tiles α ps)
+      | None => count_tiles α ps
+      end
+  end.
+
+Definition positions_in_range (n : nat) : list Position :=
+  let coords := seq 0 n in
+  flat_map (fun x => map (fun y => (Z.of_nat x, Z.of_nat y)) coords) coords.
+
+Definition assembly_size (α : Assembly) (n : nat) : nat :=
+  count_tiles α (positions_in_range n).
+
+Lemma flat_map_length_helper :
+  forall (A B : Type) (f : A -> list B) (l : list A) (n : nat),
+    (forall a, In a l -> length (f a) = n) ->
+    length (flat_map f l) = length l * n.
+Proof.
+  intros A B f l n H.
+  induction l as [|a l' IH]; simpl.
+  - reflexivity.
+  - rewrite app_length. rewrite IH.
+    + rewrite H. lia. left. reflexivity.
+    + intros a' Hin. apply H. right. exact Hin.
+Qed.
+
+Theorem assembly_size_bounded :
+  forall α n,
+    assembly_size α n <= n * n.
+Proof.
+  intros α n.
+  unfold assembly_size.
+  assert (H: forall ps, count_tiles α ps <= length ps).
+  { induction ps as [| p ps' IH]; simpl; [lia |].
+    destruct (α p); simpl; lia. }
+  apply Nat.le_trans with (m := length (positions_in_range n)).
+  - apply H.
+  - unfold positions_in_range.
+    rewrite flat_map_length_helper with (n := n).
+    + rewrite seq_length. reflexivity.
+    + intros. rewrite map_length. rewrite seq_length. reflexivity.
+Qed.
+
+Lemma termination_check_decidable :
+  forall tas α t p,
+    tile_at α p = None ->
+    {binding_strength (tas_glue_strength tas) t α p < tas_temp tas} +
+    {binding_strength (tas_glue_strength tas) t α p >= tas_temp tas}.
+Proof.
+  intros tas α t p Hempty.
+  destruct (Nat.ltb (binding_strength (tas_glue_strength tas) t α p) (tas_temp tas)) eqn:Hlt.
+  - left. apply Nat.ltb_lt. exact Hlt.
+  - right. apply Nat.ltb_ge. exact Hlt.
+Qed.
+
+Theorem terminal_assembly_exists_from_maximal :
+  forall tas α,
+    producible_in tas α ->
+    (forall α', producible_in tas α' -> α ⊆ α' -> α = α') ->
+    is_terminal tas α.
+Proof.
+  intros tas α Hprod Hmaximal.
+  unfold is_terminal.
+  intros t p Hin Hempty.
+  destruct (termination_check_decidable tas α t p Hempty) as [Hlt | Hge].
+  - exact Hlt.
+  - exfalso.
+    assert (Hcan: can_attach (tas_glue_strength tas) t α p (tas_temp tas)).
+    { split; auto. }
+    pose (α' := place_tile α t p).
+    assert (Hstep: single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α α').
+    { exists t, p. split; [exact Hin | split; [exact Hcan | reflexivity]]. }
+    assert (Hprod': producible_in tas α').
+    { unfold producible_in.
+      eapply multi_step_trans.
+      exact Hprod.
+      eapply ms_step.
+      exact Hstep.
+      apply ms_refl. }
+    assert (Hsub: α ⊆ α').
+    { apply place_tile_extends. exact Hempty. }
+    specialize (Hmaximal α' Hprod' Hsub).
+    assert (Hspec: α p = α' p) by (rewrite Hmaximal; reflexivity).
+    unfold α' in Hspec. unfold place_tile in Hspec.
+    destruct p as [px py]. unfold pos_eq in Hspec. simpl in Hspec.
+    rewrite Z.eqb_refl, Z.eqb_refl in Hspec. simpl in Hspec.
+    unfold tile_at in Hempty. simpl in Hempty.
+    rewrite Hempty in Hspec. discriminate.
+Qed.
+
 Theorem directed_implies_unique_terminal :
   forall tas α β,
     is_directed tas ->
