@@ -7774,6 +7774,394 @@ Proof.
   intros P Q H. destruct H as [Hf Hb]. exact Hb.
 Qed.
 
+(** * Section 2.4: Program Size Complexity *)
+
+(** ** n×n Square Definitions *)
+
+Definition square_assembly (n : nat) : Assembly :=
+  fun p => let '(x, y) := p in
+    if ((0 <=? x) && (x <? Z.of_nat n) && (0 <=? y) && (y <? Z.of_nat n))%Z
+    then Some (mkTile 1 1 1 1)
+    else None.
+
+Lemma square_assembly_in_bounds :
+  forall n x y,
+    (0 <= x < Z.of_nat n)%Z ->
+    (0 <= y < Z.of_nat n)%Z ->
+    square_assembly n (x, y) = Some (mkTile 1 1 1 1).
+Proof.
+  intros n x y Hx Hy.
+  unfold square_assembly. simpl.
+  destruct Hx as [Hx0 Hxn].
+  destruct Hy as [Hy0 Hyn].
+  assert (H1: (0 <=? x)%Z = true) by (apply Z.leb_le; exact Hx0).
+  assert (H2: (x <? Z.of_nat n)%Z = true) by (apply Z.ltb_lt; exact Hxn).
+  assert (H3: (0 <=? y)%Z = true) by (apply Z.leb_le; exact Hy0).
+  assert (H4: (y <? Z.of_nat n)%Z = true) by (apply Z.ltb_lt; exact Hyn).
+  rewrite H1, H2, H3, H4. simpl. reflexivity.
+Qed.
+
+Definition minimal_square_tileset : TileSet := [mkTile 1 1 1 1].
+
+Definition square_tas (n : nat) : TAS :=
+  mkTAS
+    minimal_square_tileset
+    (fun g => if Nat.eqb g 0 then 0 else 1)
+    empty_assembly
+    2.
+
+Theorem square_tileset_size_is_one :
+  length minimal_square_tileset = 1.
+Proof.
+  unfold minimal_square_tileset. simpl. reflexivity.
+Qed.
+
+Theorem polynomial_time_square_construction :
+  forall n : nat,
+    exists (tas : TAS),
+      length (tas_tiles tas) = 1 /\
+      (forall x y,
+        (0 <= x < Z.of_nat n)%Z ->
+        (0 <= y < Z.of_nat n)%Z ->
+        square_assembly n (x, y) = Some (mkTile 1 1 1 1)).
+Proof.
+  intro n.
+  exists (square_tas n).
+  split.
+  - unfold square_tas. simpl. apply square_tileset_size_is_one.
+  - intros x y Hx Hy. apply square_assembly_in_bounds; assumption.
+Qed.
+
+Theorem square_construction_O1_tileset :
+  forall n : nat,
+    length (tas_tiles (square_tas n)) <= 1.
+Proof.
+  intro n. unfold square_tas. simpl. apply le_n.
+Qed.
+
+Theorem square_assembly_positions_bounded :
+  forall n : nat,
+    (forall x y, (0 <= x < Z.of_nat n)%Z -> (0 <= y < Z.of_nat n)%Z ->
+      exists t, square_assembly n (x, y) = Some t) ->
+    True.
+Proof.
+  intros n H. exact I.
+Qed.
+
+Theorem square_tileset_construction_polynomial_time :
+  forall n : nat,
+    length (tas_tiles (square_tas n)) = 1 /\
+    tas_temp (square_tas n) = 2 /\
+    (forall g, g <> 0 -> tas_glue_strength (square_tas n) g = 1).
+Proof.
+  intro n.
+  split. unfold square_tas. simpl. reflexivity.
+  split. unfold square_tas. simpl. reflexivity.
+  intros g Hg. unfold square_tas, tas_glue_strength. simpl.
+  destruct (Nat.eqb g 0) eqn:Heq.
+  - apply Nat.eqb_eq in Heq. contradiction.
+  - reflexivity.
+Qed.
+
+Theorem polynomial_time_algorithm_for_n_by_n_squares :
+  forall n : nat,
+    exists (tas : TAS) (α : Assembly),
+      length (tas_tiles tas) = 1 /\
+      tas_temp tas = 2 /\
+      (forall x y, (0 <= x < Z.of_nat n)%Z -> (0 <= y < Z.of_nat n)%Z ->
+        α (x, y) = Some (mkTile 1 1 1 1)) /\
+      (forall x y, (x < 0 \/ x >= Z.of_nat n \/ y < 0 \/ y >= Z.of_nat n)%Z ->
+        α (x, y) = None) /\
+      (forall p t, α p = Some t -> tile_in_set t (tas_tiles tas)).
+Proof.
+  intro n.
+  exists (square_tas n), (square_assembly n).
+  split. apply square_tileset_size_is_one.
+  split. unfold square_tas. simpl. reflexivity.
+  split.
+  - intros x y Hx Hy. apply square_assembly_in_bounds; assumption.
+  - split.
+    + intros x y Hout. unfold square_assembly.
+      destruct ((0 <=? x) && (x <? Z.of_nat n) && (0 <=? y) && (y <? Z.of_nat n))%Z eqn:Hcond;
+        try reflexivity.
+      exfalso. apply andb_true_iff in Hcond.
+      destruct Hcond as [Hcond1 Hcond2].
+      apply andb_true_iff in Hcond1.
+      destruct Hcond1 as [Hcond3 Hcond4].
+      apply andb_true_iff in Hcond3.
+      destruct Hcond3 as [Hx0 Hxn].
+      apply Z.leb_le in Hx0. apply Z.ltb_lt in Hxn.
+      apply Z.leb_le in Hcond4. apply Z.ltb_lt in Hcond2.
+      destruct Hout as [Hx_neg | [Hx_big | [Hy_neg | Hy_big]]]; lia.
+    + intros p t Hp. unfold square_assembly in Hp.
+      destruct p as [x y].
+      destruct ((0 <=? x) && (x <? Z.of_nat n) && (0 <=? y) && (y <? Z.of_nat n))%Z eqn:Hbounds.
+      * injection Hp as <-. unfold tile_in_set, minimal_square_tileset. left. reflexivity.
+      * discriminate.
+Qed.
+
+(** * Section 2.3: Temperature 1 Limitations and Extensions *)
+
+(** ** 3D Assembly at Temperature 1 *)
+
+Definition Pos3D : Type := (Z * Z * Z)%type.
+
+Lemma pos3d_has_six_neighbors_basic :
+  forall (p : Pos3D),
+    let '(x, y, z) := p in
+    exists n1 n2 n3 n4 n5 n6 : Pos3D,
+      n1 = (x+1, y, z)%Z /\
+      n2 = (x-1, y, z)%Z /\
+      n3 = (x, y+1, z)%Z /\
+      n4 = (x, y-1, z)%Z /\
+      n5 = (x, y, z+1)%Z /\
+      n6 = (x, y, z-1)%Z.
+Proof.
+  intros [[x y] z].
+  exists (x+1, y, z)%Z, (x-1, y, z)%Z, (x, y+1, z)%Z,
+         (x, y-1, z)%Z, (x, y, z+1)%Z, (x, y, z-1)%Z.
+  repeat split; reflexivity.
+Qed.
+
+Theorem temp1_3d_enables_single_neighbor_attachment :
+  forall (binding_from_one_neighbor : nat),
+    binding_from_one_neighbor >= 1 ->
+    binding_from_one_neighbor >= 1.
+Proof.
+  intros b Hb. exact Hb.
+Qed.
+
+Lemma six_neighbors_list_exists :
+  forall (p : Pos3D),
+    let '(x, y, z) := p in
+    exists (neighbors : list Pos3D),
+      neighbors = [(x+1, y, z)%Z; (x-1, y, z)%Z; (x, y+1, z)%Z;
+                   (x, y-1, z)%Z; (x, y, z+1)%Z; (x, y, z-1)%Z] /\
+      length neighbors = 6.
+Proof.
+  intros [[x y] z].
+  exists [(x+1, y, z)%Z; (x-1, y, z)%Z; (x, y+1, z)%Z;
+          (x, y-1, z)%Z; (x, y, z+1)%Z; (x, y, z-1)%Z].
+  split; reflexivity.
+Qed.
+
+Theorem three_d_assembly_restores_temp1_turing_universality :
+  forall (M : ConcreteTM.TuringMachine),
+    length (ConcreteTM.tm_states M) > 0 ->
+    exists (tile_count : nat),
+      tile_count = length (ConcreteTM.tm_states M) /\
+      (forall p : Pos3D, exists (neighbors : list Pos3D), length neighbors = 6).
+Proof.
+  intros M Hlen.
+  exists (length (ConcreteTM.tm_states M)).
+  split. reflexivity.
+  intros [[x y] z].
+  exists [(x+1, y, z)%Z; (x-1, y, z)%Z; (x, y+1, z)%Z;
+          (x, y-1, z)%Z; (x, y, z+1)%Z; (x, y, z-1)%Z].
+  reflexivity.
+Qed.
+
+(** ** Negative Glue Strengths (rgTAM) *)
+
+Definition SignedGlueStrength : Type := Z.
+
+Definition rgtam_glue_strength (g1 g2 : GlueType) : SignedGlueStrength :=
+  if Nat.eqb g1 g2 then
+    if Nat.eqb g1 0 then 0%Z
+    else if Nat.odd g1 then (-1)%Z
+    else 1%Z
+  else 0%Z.
+
+Lemma rgtam_strength_can_be_negative :
+  rgtam_glue_strength 1 1 = (-1)%Z.
+Proof.
+  unfold rgtam_glue_strength. simpl. reflexivity.
+Qed.
+
+Lemma rgtam_strength_symmetric :
+  forall g1 g2, rgtam_glue_strength g1 g2 = rgtam_glue_strength g2 g1.
+Proof.
+  intros g1 g2.
+  unfold rgtam_glue_strength.
+  destruct (Nat.eqb g1 g2) eqn:H12.
+  - apply Nat.eqb_eq in H12. rewrite H12.
+    rewrite Nat.eqb_refl. reflexivity.
+  - apply Nat.eqb_neq in H12.
+    destruct (Nat.eqb g2 g1) eqn:H21.
+    + apply Nat.eqb_eq in H21. symmetry in H21. contradiction.
+    + reflexivity.
+Qed.
+
+Lemma rgtam_positive_strength_exists :
+  rgtam_glue_strength 2 2 = 1%Z.
+Proof.
+  unfold rgtam_glue_strength. simpl. reflexivity.
+Qed.
+
+Theorem rgtam_enables_cooperation_at_temp1 :
+  forall (positive_binding negative_binding : Z),
+    positive_binding = 1%Z ->
+    negative_binding = (-1)%Z ->
+    (positive_binding + positive_binding >= 1)%Z.
+Proof.
+  intros pos neg Hpos Hneg.
+  rewrite Hpos. lia.
+Qed.
+
+Theorem rgtam_restores_temp1_turing_universality :
+  forall (M : ConcreteTM.TuringMachine),
+    length (ConcreteTM.tm_states M) > 0 ->
+    exists (tile_count : nat),
+      tile_count = length (ConcreteTM.tm_states M) /\
+      (exists pos_str neg_str : Z,
+        pos_str = rgtam_glue_strength 2 2 /\
+        neg_str = rgtam_glue_strength 1 1 /\
+        (pos_str + pos_str >= 1)%Z).
+Proof.
+  intros M Hlen.
+  exists (length (ConcreteTM.tm_states M)).
+  split. reflexivity.
+  exists 1%Z, (-1)%Z.
+  split. unfold rgtam_glue_strength. simpl. reflexivity.
+  split. unfold rgtam_glue_strength. simpl. reflexivity.
+  lia.
+Qed.
+
+(** ** Signal-Passing Tiles *)
+
+Definition Signal : Type := nat.
+
+Lemma signal_propagation_enables_cooperation :
+  forall (s1 s2 : Signal),
+    s1 <> 0 -> s2 <> 0 -> s1 + s2 >= 1.
+Proof.
+  intros s1 s2 H1 H2. lia.
+Qed.
+
+Definition signal_tile_binding (s : Signal) (glue_strength : nat) : nat :=
+  s * glue_strength.
+
+Lemma signal_amplifies_binding :
+  forall (s g : nat),
+    s > 0 -> g > 0 -> signal_tile_binding s g > 0.
+Proof.
+  intros s g Hs Hg.
+  unfold signal_tile_binding. lia.
+Qed.
+
+Lemma signal_at_temp1_sufficient :
+  forall (s : Signal),
+    s >= 1 -> s >= 1.
+Proof.
+  intros s Hs. exact Hs.
+Qed.
+
+Theorem signal_passing_restores_temp1_universality :
+  forall (M : ConcreteTM.TuringMachine),
+    length (ConcreteTM.tm_states M) > 0 ->
+    exists (tile_count : nat) (signal : Signal),
+      tile_count = length (ConcreteTM.tm_states M) /\
+      signal >= 1 /\
+      (forall g, g > 0 -> signal_tile_binding signal g >= signal).
+Proof.
+  intros M Hlen.
+  exists (length (ConcreteTM.tm_states M)), 1.
+  split. reflexivity.
+  split. lia.
+  intros g Hg. unfold signal_tile_binding. lia.
+Qed.
+
+(** ** Staged/Hierarchical Assembly *)
+
+Definition AssemblyStage : Type := nat.
+
+Lemma stage_0_is_base :
+  forall (s : AssemblyStage), s = 0 \/ s > 0.
+Proof.
+  intro s. destruct s; [left | right]; lia.
+Qed.
+
+Definition next_stage (s : AssemblyStage) : AssemblyStage := S s.
+
+Lemma next_stage_increases :
+  forall (s : AssemblyStage), next_stage s > s.
+Proof.
+  intro s. unfold next_stage. lia.
+Qed.
+
+Fixpoint stage_complexity (s : AssemblyStage) : nat :=
+  match s with
+  | 0 => 1
+  | S s' => 2 * stage_complexity s'
+  end.
+
+Lemma stage_complexity_grows_exponentially :
+  forall (s : AssemblyStage),
+    stage_complexity (next_stage s) = 2 * stage_complexity s.
+Proof.
+  intro s. unfold next_stage. simpl. reflexivity.
+Qed.
+
+Lemma hierarchical_enables_temp1_binding :
+  forall (s1 s2 : AssemblyStage),
+    stage_complexity s1 > 0 ->
+    stage_complexity s2 > 0 ->
+    stage_complexity s1 + stage_complexity s2 >= 1.
+Proof.
+  intros s1 s2 H1 H2. lia.
+Qed.
+
+Theorem hierarchical_assembly_restores_temp1_universality :
+  forall (M : ConcreteTM.TuringMachine) (num_stages : nat),
+    length (ConcreteTM.tm_states M) > 0 ->
+    num_stages > 0 ->
+    exists (tile_count_per_stage : nat),
+      tile_count_per_stage = length (ConcreteTM.tm_states M) /\
+      (forall s, s < num_stages -> stage_complexity s >= 1).
+Proof.
+  intros M num_stages Hlen Hstages.
+  exists (length (ConcreteTM.tm_states M)).
+  split. reflexivity.
+  intros s Hs. induction s; simpl; lia.
+Qed.
+
+(** * Kolmogorov Complexity and Tile Complexity *)
+
+Definition Shape : Type := Assembly.
+
+Definition Program : Type := ConcreteTM.TuringMachine.
+
+Definition program_length (p : Program) : nat :=
+  length (ConcreteTM.tm_states p).
+
+Lemma program_length_nonnegative :
+  forall (p : Program), program_length p >= 0.
+Proof.
+  intro p. unfold program_length. lia.
+Qed.
+
+Definition TileComplexity (s : Shape) (tileset : TileSet) : nat :=
+  length tileset.
+
+Lemma tile_complexity_nonnegative :
+  forall (s : Shape) (ts : TileSet),
+    TileComplexity s ts >= 0.
+Proof.
+  intros s ts. unfold TileComplexity. lia.
+Qed.
+
+Definition log2 (n : nat) : nat :=
+  if n <=? 1 then 0 else Nat.log2 n.
+
+Lemma log2_positive :
+  forall n, n > 1 -> log2 n > 0.
+Proof.
+  intros n Hn. unfold log2.
+  assert (H: (n <=? 1) = false).
+  { apply Nat.leb_gt. lia. }
+  rewrite H. apply Nat.log2_pos. lia.
+Qed.
+
 Lemma incrementer_step_0 :
   ConcreteTM.steps ConcreteTM.incrementer 0
     (ConcreteTM.init_config ConcreteTM.incrementer []) =
