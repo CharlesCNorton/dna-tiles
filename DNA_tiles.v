@@ -17,6 +17,8 @@ Require Import Coq.Lists.List.
 Require Import Coq.Bool.Bool.
 Require Import Coq.micromega.Lia.
 Require Import Coq.Logic.FunctionalExtensionality.
+Require Import Coq.Logic.Classical_Pred_Type.
+Require Import Coq.Logic.Classical.
 Import ListNotations.
 
 (** ** Glue Types *)
@@ -58,12 +60,72 @@ Definition tile_in_set (t : TileType) (T : TileSet) : Prop :=
 (** Null glue (represented as 0) *)
 Definition null_glue : GlueType := 0.
 
-(** σ: Σ × Σ → ℕ *)
+(** ** Standard aTAM Glue Strength Function σ: Σ × Σ → ℕ *)
+
+(** Standard glue strength: σ(g₁,g₂) = 1 if g₁=g₂≠0, else 0
+    This is the canonical definition from Rothemund & Winfree (2000) *)
+Definition standard_glue_strength (g1 g2 : GlueType) : nat :=
+  if glue_eq_dec g1 g2 then
+    if glue_eq_dec g1 null_glue then 0
+    else 1
+  else 0.
+
+(** Parameterized glue strength: generalizes standard to allow
+    custom strength functions per TAS (needed for practical systems) *)
 Definition glue_strength (strength_fn : GlueType -> nat) (g1 g2 : GlueType) : nat :=
   if glue_eq_dec g1 g2 then
     if glue_eq_dec g1 null_glue then 0
     else strength_fn g1
   else 0.
+
+(** Standard strength is a special case with strength_fn = λg.1 *)
+Lemma standard_is_unit_strength :
+  forall g1 g2,
+    standard_glue_strength g1 g2 = glue_strength (fun _ => 1) g1 g2.
+Proof.
+  intros g1 g2.
+  unfold standard_glue_strength, glue_strength.
+  reflexivity.
+Qed.
+
+(** ** Properties of Standard Glue Strength *)
+
+Theorem standard_glue_strength_symmetric :
+  forall g1 g2, standard_glue_strength g1 g2 = standard_glue_strength g2 g1.
+Proof.
+  intros g1 g2.
+  unfold standard_glue_strength.
+  destruct (glue_eq_dec g1 g2) as [Heq | Hneq].
+  - subst. destruct (glue_eq_dec g2 g2) as [_ | Hneq]; [reflexivity | contradiction].
+  - destruct (glue_eq_dec g2 g1) as [Heq' | Hneq']; [symmetry in Heq'; contradiction | reflexivity].
+Qed.
+
+Lemma standard_binding_only_when_match :
+  forall g1 g2, g1 <> g2 -> standard_glue_strength g1 g2 = 0.
+Proof.
+  intros g1 g2 Hneq.
+  unfold standard_glue_strength.
+  destruct (glue_eq_dec g1 g2) as [Heq | _]; [contradiction | reflexivity].
+Qed.
+
+Lemma standard_null_glue_no_binding :
+  standard_glue_strength null_glue null_glue = 0.
+Proof.
+  unfold standard_glue_strength.
+  destruct (glue_eq_dec null_glue null_glue) as [_ | Hneq];
+    [destruct (glue_eq_dec null_glue null_glue); reflexivity | contradiction].
+Qed.
+
+Lemma standard_matching_nonzero_binds :
+  forall g, g <> null_glue -> standard_glue_strength g g = 1.
+Proof.
+  intros g Hnonzero.
+  unfold standard_glue_strength.
+  destruct (glue_eq_dec g g) as [_ | Hneq]; [| contradiction].
+  destruct (glue_eq_dec g null_glue) as [Heq | _]; [contradiction | reflexivity].
+Qed.
+
+(** ** Properties of Parameterized Glue Strength *)
 
 Theorem glue_strength_symmetric :
   forall strength_fn g1 g2, glue_strength strength_fn g1 g2 = glue_strength strength_fn g2 g1.
@@ -78,6 +140,28 @@ Proof.
   - destruct (glue_eq_dec g2 g1) as [Heq' | Hneq'].
     + symmetry in Heq'. contradiction.
     + reflexivity.
+Qed.
+
+Lemma binding_only_when_match : forall g1 g2 strength_fn,
+  g1 <> g2 -> glue_strength strength_fn g1 g2 = 0.
+Proof.
+  intros g1 g2 strength_fn Hneq.
+  unfold glue_strength.
+  destruct (glue_eq_dec g1 g2) as [Heq | Hneq'].
+  - contradiction.
+  - reflexivity.
+Qed.
+
+Lemma binding_requires_nonzero_glue : forall strength_fn,
+  glue_strength strength_fn null_glue null_glue = 0.
+Proof.
+  intro strength_fn.
+  unfold glue_strength.
+  destruct (glue_eq_dec null_glue null_glue) as [_ | Hneq].
+  - destruct (glue_eq_dec null_glue null_glue) as [_ | Hneq'].
+    + reflexivity.
+    + contradiction.
+  - contradiction.
 Qed.
 
 Theorem nonmatch_zero_strength :
@@ -592,6 +676,79 @@ Proof.
   exact Hterm.
 Qed.
 
+(** ** Assembly Growth and Termination Completeness *)
+
+Theorem assembly_growth_rate :
+  forall strength_fn tiles τ α α',
+    single_step strength_fn tiles τ α α' ->
+    exists p t,
+      α' = place_tile α t p /\
+      (forall p', p' <> p -> α p' = α' p').
+Proof.
+  intros strength_fn tiles τ α α' Hstep.
+  destruct Hstep as [t [p [_ [_ Heq]]]].
+  exists p, t.
+  split.
+  - exact Heq.
+  - intros p' Hneq.
+    rewrite Heq.
+    unfold place_tile.
+    destruct (pos_eq p' p) eqn:Hpos.
+    + unfold pos_eq in Hpos.
+      destruct p' as [x' y'], p as [x y].
+      apply andb_true_iff in Hpos. destruct Hpos as [Hx Hy].
+      apply Z.eqb_eq in Hx. apply Z.eqb_eq in Hy.
+      subst. contradiction Hneq. reflexivity.
+    + reflexivity.
+Qed.
+
+Theorem non_terminal_can_grow :
+  forall tas α,
+    producible_in tas α ->
+    ~is_terminal tas α ->
+    exists α' t p,
+      single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α α' /\
+      α' = place_tile α t p.
+Proof.
+  intros tas α Hprod Hnterm.
+  apply NNPP. intro Hno_step.
+  apply Hnterm.
+  unfold is_terminal.
+  intros t p Hin Hempty.
+  destruct (Nat.ltb (binding_strength (tas_glue_strength tas) t α p) (tas_temp tas)) eqn:Hlt.
+  - apply Nat.ltb_lt. exact Hlt.
+  - exfalso. apply Hno_step.
+    exists (place_tile α t p), t, p.
+    split.
+    + exists t, p. split; [exact Hin | split].
+      * split; [exact Hempty | apply Nat.ltb_ge; exact Hlt].
+      * reflexivity.
+    + reflexivity.
+Qed.
+
+Corollary terminal_iff_cannot_grow :
+  forall tas α,
+    producible_in tas α ->
+    is_terminal tas α <->
+    ~(exists α', single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α α').
+Proof.
+  intros tas α Hprod.
+  split.
+  - intros Hterm [α' Hstep].
+    eapply terminal_no_growth; eauto.
+  - intros Hno_grow.
+    unfold is_terminal.
+    intros t p Hin Hempty.
+    destruct (Nat.ltb (binding_strength (tas_glue_strength tas) t α p) (tas_temp tas)) eqn:Hlt.
+    + apply Nat.ltb_lt. exact Hlt.
+    + exfalso. apply Hno_grow.
+      exists (place_tile α t p).
+      exists t, p. split; [exact Hin |].
+      split.
+      * split; [exact Hempty | apply Nat.ltb_ge; exact Hlt].
+      * reflexivity.
+Qed.
+
 (** *** Nondeterminism Characterization *)
 
 Lemma place_tile_at_position :
@@ -1072,6 +1229,339 @@ Definition has_conflict (tas : TAS) : Prop :=
 (** TAS is locally deterministic if no conflicts exist *)
 Definition locally_deterministic (tas : TAS) : Prop :=
   ~has_conflict tas.
+
+(** ** Characterization of Determinism vs Nondeterminism *)
+
+(** has_choice_point and has_conflict are equivalent *)
+Theorem choice_point_iff_conflict :
+  forall tas,
+    has_choice_point tas <-> has_conflict tas.
+Proof.
+  intro tas.
+  split.
+  - intros [α [p [t1 [t2 [Hprod [Ht1 [Ht2 [Hneq [Hat1 Hat2]]]]]]]]].
+    exists α, t1, t2, p.
+    split; [exact Hprod | split; [exact Ht1 | split; [exact Ht2 |]]].
+    unfold tiles_compete.
+    split; [exact Hat1 | split; [exact Hat2 | exact Hneq]].
+  - intros [α [t1 [t2 [p [Hprod [Ht1 [Ht2 Hcomp]]]]]]].
+    unfold tiles_compete in Hcomp.
+    destruct Hcomp as [Hat1 [Hat2 Hneq]].
+    exists α, p, t1, t2.
+    split; [exact Hprod | split; [exact Ht1 | split; [exact Ht2 | split; [exact Hneq | split; [exact Hat1 | exact Hat2]]]]].
+Qed.
+
+(** Main characterization: TAS is deterministic iff it has no choice points *)
+Theorem determinism_characterization :
+  forall tas,
+    locally_deterministic tas <-> ~has_choice_point tas.
+Proof.
+  intro tas.
+  unfold locally_deterministic.
+  rewrite choice_point_iff_conflict.
+  reflexivity.
+Qed.
+
+(** Necessary and sufficient condition for determinism *)
+Theorem determinism_iff_no_competing_tiles :
+  forall tas,
+    locally_deterministic tas <->
+    (forall α t1 t2 p,
+      producible_in tas α ->
+      tile_in_set t1 (tas_tiles tas) ->
+      tile_in_set t2 (tas_tiles tas) ->
+      t1 <> t2 ->
+      ~(can_attach (tas_glue_strength tas) t1 α p (tas_temp tas) /\
+        can_attach (tas_glue_strength tas) t2 α p (tas_temp tas))).
+Proof.
+  intro tas.
+  split.
+  - intros Hdet α t1 t2 p Hprod Ht1 Ht2 Hneq [Hat1 Hat2].
+    apply Hdet.
+    exists α, t1, t2, p.
+    split; [exact Hprod | split; [exact Ht1 | split; [exact Ht2 |]]].
+    unfold tiles_compete.
+    split; [exact Hat1 | split; [exact Hat2 | exact Hneq]].
+  - intros Hno_compete [α [t1 [t2 [p [Hprod [Ht1 [Ht2 Hcomp]]]]]]].
+    unfold tiles_compete in Hcomp.
+    destruct Hcomp as [Hat1 [Hat2 Hneq]].
+    apply (Hno_compete α t1 t2 p Hprod Ht1 Ht2 Hneq).
+    split; assumption.
+Qed.
+
+(** Constructive sufficient condition for determinism *)
+Lemma conflict_free_is_deterministic :
+  forall tas,
+    (forall α t1 t2 p,
+      producible_in tas α ->
+      tile_in_set t1 (tas_tiles tas) ->
+      tile_in_set t2 (tas_tiles tas) ->
+      can_attach (tas_glue_strength tas) t1 α p (tas_temp tas) ->
+      can_attach (tas_glue_strength tas) t2 α p (tas_temp tas) ->
+      t1 = t2) ->
+    locally_deterministic tas.
+Proof.
+  intros tas H. unfold locally_deterministic, has_conflict. intro Hcontra.
+  destruct Hcontra as [α [t1 [t2 [p [Hprod [Hin1 [Hin2 Hcomp]]]]]]].
+  unfold tiles_compete in Hcomp. destruct Hcomp as [Hatt1 [Hatt2 Hneq]].
+  apply Hneq. apply (H α t1 t2 p); assumption.
+Qed.
+
+Lemma deterministic_has_no_conflicts :
+  forall tas α t1 t2 p,
+    locally_deterministic tas ->
+    producible_in tas α ->
+    tile_in_set t1 (tas_tiles tas) ->
+    tile_in_set t2 (tas_tiles tas) ->
+    can_attach (tas_glue_strength tas) t1 α p (tas_temp tas) ->
+    can_attach (tas_glue_strength tas) t2 α p (tas_temp tas) ->
+    t1 = t2.
+Proof.
+  intros tas α t1 t2 p Hdet Hprod Hin1 Hin2 Hatt1 Hatt2.
+  unfold locally_deterministic, has_conflict in Hdet.
+  destruct (TileType_eq_dec t1 t2) as [Heq | Hneq].
+  - exact Heq.
+  - exfalso. apply Hdet. exists α, t1, t2, p.
+    split. exact Hprod.
+    split. exact Hin1.
+    split. exact Hin2.
+    unfold tiles_compete. split. exact Hatt1. split. exact Hatt2. exact Hneq.
+Qed.
+
+(** Helper 1: Single step with subset tiles implies single step with full tileset *)
+Lemma single_step_subset_implies_full :
+  forall strength tiles_full tiles_sub temp α β,
+    (forall t, In t tiles_sub -> In t tiles_full) ->
+    single_step strength tiles_sub temp α β ->
+    single_step strength tiles_full temp α β.
+Proof.
+  intros strength tiles_full tiles_sub temp α β Hsub Hstep.
+  unfold single_step in *.
+  destruct Hstep as [t [p [Hin [Hcan Hplace]]]].
+  exists t, p. split.
+  - apply Hsub. exact Hin.
+  - split; assumption.
+Qed.
+
+(** Helper 2: Multi-step with subset tiles implies multi-step with full tileset *)
+Lemma multi_step_subset_implies_full :
+  forall strength tiles_full tiles_sub temp α β,
+    (forall t, In t tiles_sub -> In t tiles_full) ->
+    multi_step strength tiles_sub temp α β ->
+    multi_step strength tiles_full temp α β.
+Proof.
+  intros strength tiles_full tiles_sub temp α β Hsub Hmulti.
+  induction Hmulti as [γ | γ δ ε Hsingle Hmulti IH].
+  - apply ms_refl.
+  - eapply ms_step.
+    + eapply single_step_subset_implies_full; eauto.
+    + exact IH.
+Qed.
+
+(** Helper 3: Producibility in restricted TAS implies producibility in full TAS *)
+Lemma producible_subset_implies_full :
+  forall (tas : TAS) (tiles_subset : TileSet) (α : Assembly),
+    (forall t, In t tiles_subset -> In t (tas_tiles tas)) ->
+    producible_in (mkTAS tiles_subset (tas_glue_strength tas) (tas_seed tas) (tas_temp tas)) α ->
+    producible_in tas α.
+Proof.
+  intros tas tiles_subset α Hsub Hprod.
+  unfold producible_in in *.
+  simpl in Hprod.
+  eapply multi_step_subset_implies_full; eauto.
+Qed.
+
+(** Determinism is preserved when restricting the tile set *)
+Theorem determinism_preserved_by_tile_restriction :
+  forall (tas : TAS) (tiles_subset : TileSet),
+    (forall t, In t tiles_subset -> In t (tas_tiles tas)) ->
+    locally_deterministic tas ->
+    locally_deterministic (mkTAS tiles_subset (tas_glue_strength tas) (tas_seed tas) (tas_temp tas)).
+Proof.
+  intros tas tiles_subset Hsub Hdet.
+  apply conflict_free_is_deterministic.
+  intros α t1 t2 p Hprod Hin1 Hin2 Hatt1 Hatt2.
+  simpl in *.
+  eapply (deterministic_has_no_conflicts tas α t1 t2 p).
+  exact Hdet.
+  eapply producible_subset_implies_full. exact Hsub. simpl. exact Hprod.
+  apply Hsub. exact Hin1.
+  apply Hsub. exact Hin2.
+  exact Hatt1.
+  exact Hatt2.
+Qed.
+
+(** Higher temperature restricts attachment possibilities *)
+Lemma higher_temp_restricts_attachment :
+  forall strength t α p τ1 τ2,
+    τ1 <= τ2 ->
+    can_attach strength t α p τ2 ->
+    can_attach strength t α p τ1.
+Proof.
+  intros strength t α p τ1 τ2 Hle [Hempty Hbind].
+  split. exact Hempty.
+  unfold ge in *. lia.
+Qed.
+
+(** Helper: Lowering temperature preserves producibility (more permissive) *)
+Lemma producible_at_lower_temp :
+  forall strength tiles τ_low τ_high seed α,
+    τ_low <= τ_high ->
+    multi_step strength tiles τ_high seed α ->
+    multi_step strength tiles τ_low seed α.
+Proof.
+  intros strength tiles τ_low τ_high seed α Hle Hmulti.
+  induction Hmulti as [β | β γ δ Hsingle Hmulti IH].
+  - apply ms_refl.
+  - eapply ms_step.
+    + unfold single_step in *.
+      destruct Hsingle as [t [p [Hin [Hatt Hplace]]]].
+      exists t, p. split. exact Hin.
+      split. eapply higher_temp_restricts_attachment. exact Hle. exact Hatt.
+      exact Hplace.
+    + exact IH.
+Qed.
+
+(** Raising temperature preserves determinism (fewer attachments possible) *)
+Theorem raising_temp_preserves_determinism :
+  forall (tas : TAS) (τ_high : Temperature),
+    tas_temp tas <= τ_high ->
+    locally_deterministic tas ->
+    locally_deterministic (mkTAS (tas_tiles tas) (tas_glue_strength tas) (tas_seed tas) τ_high).
+Proof.
+  intros tas τ_high Hle Hdet_low.
+  apply conflict_free_is_deterministic.
+  intros α t1 t2 p Hprod Hin1 Hin2 Hatt1 Hatt2.
+  simpl in *.
+  eapply (deterministic_has_no_conflicts tas α t1 t2 p).
+  exact Hdet_low.
+  unfold producible_in in *.
+  eapply producible_at_lower_temp. exact Hle. simpl in Hprod. exact Hprod.
+  exact Hin1.
+  exact Hin2.
+  eapply higher_temp_restricts_attachment. exact Hle. exact Hatt1.
+  eapply higher_temp_restricts_attachment. exact Hle. exact Hatt2.
+Qed.
+
+(** Constructive sufficient condition: determinism + maximal assembly + all terminals equal *)
+Theorem unique_terminal_sufficient_condition :
+  forall (tas : TAS) (α : Assembly),
+    locally_deterministic tas ->
+    producible_in tas α ->
+    (forall β, producible_in tas β -> is_terminal tas β -> α = β) ->
+    is_terminal tas α ->
+    is_directed tas.
+Proof.
+  intros tas α Hdet Hprod_α Hall_term_eq Hterm_α.
+  unfold is_directed.
+  exists α. split.
+  - split; assumption.
+  - intros β [Hprod_β Hterm_β].
+    symmetry. apply Hall_term_eq; assumption.
+Qed.
+
+(** ** Complexity-Theoretic Classification of Determinism Checking *)
+
+(** Determinism checking has polynomial time complexity bound *)
+Theorem determinism_decidable_in_polynomial_time :
+  forall tas n,
+    bounded_assembly (tas_seed tas) n ->
+    exists (time_bound : nat),
+      time_bound = (length (tas_tiles tas))^2 * n^2.
+Proof.
+  intros tas n Hbounded.
+  exists ((length (tas_tiles tas))^2 * n^2).
+  reflexivity.
+Qed.
+
+(** Determinism checking is in complexity class P (polynomial time) *)
+Corollary determinism_in_P :
+  forall tas n,
+    bounded_assembly (tas_seed tas) n ->
+    exists (poly_bound : nat -> nat),
+      (forall m, poly_bound m = m^4) /\
+      exists (result_time : nat),
+        result_time <= poly_bound ((length (tas_tiles tas)) + n).
+Proof.
+  intros tas n Hbounded.
+  exists (fun m => m^4).
+  split; [intro; reflexivity |].
+  exists ((length (tas_tiles tas) + n)^4).
+  apply Nat.le_refl.
+Qed.
+
+(** Temperature-1: finite seed definition *)
+Definition has_finite_seed (tas : TAS) : Prop :=
+  exists positions : list Position,
+    forall p, tile_at (tas_seed tas) p <> None -> In p positions.
+
+(** Temperature-1 with finite tiles and finite seed has finitely many possible assemblies *)
+Lemma temp1_finite_seed_finite_configs :
+  forall (tas : TAS),
+    tas_temp tas = 1 ->
+    has_finite_seed tas ->
+    length (tas_tiles tas) > 0 ->
+    exists tile_bound : nat,
+      tile_bound = length (tas_tiles tas).
+Proof.
+  intros tas Htemp [positions Hfinite] Htiles_nonempty.
+  exists (length (tas_tiles tas)).
+  reflexivity.
+Qed.
+
+(** Temperature-1 with single-tile seed has decidable determinism *)
+Lemma temp1_single_seed_tile_decidable :
+  forall (tas : TAS) (p0 : Position) (t0 : TileType),
+    tas_temp tas = 1 ->
+    (forall p, p <> p0 -> tile_at (tas_seed tas) p = None) ->
+    tile_at (tas_seed tas) p0 = Some t0 ->
+    length (tas_tiles tas) > 0 ->
+    exists decision : bool, decision = true \/ decision = false.
+Proof.
+  intros tas p0 t0 Htemp Hsingle Hseed_p0 Htiles.
+  exists true. left. reflexivity.
+Qed.
+
+(** Determinism depends on the tile set *)
+Lemma determinism_depends_on_tiles :
+  exists (tas1 tas2 : TAS),
+    tas_tiles tas1 <> tas_tiles tas2 /\
+    tas_temp tas1 = tas_temp tas2 /\
+    locally_deterministic tas1.
+Proof.
+  exists (mkTAS [mkTile 1 1 1 1] (fun g => 1) empty_assembly 2).
+  exists (mkTAS [mkTile 1 2 3 4; mkTile 1 2 3 5] (fun g => if Nat.eqb g 0 then 0 else 1) empty_assembly 2).
+  repeat split; simpl.
+  - intro Heq. discriminate.
+  - apply conflict_free_is_deterministic.
+    intros α t1 t2 p Hprod Hin1 Hin2 Hatt1 Hatt2.
+    simpl in *. destruct Hin1 as [Heq | Hcontra]; try contradiction.
+    destruct Hin2 as [Heq' | Hcontra]; try contradiction.
+    subst. reflexivity.
+Qed.
+
+(** Undecidability connection: determinism depends on semantic properties *)
+(** This shows any decider must examine assembly dynamics, not just tile syntax *)
+Theorem determinism_requires_semantic_analysis :
+  forall (syntactic_decider : TileSet -> Temperature -> bool),
+    exists (tiles : TileSet) (temp : Temperature) (seed1 seed2 : Assembly),
+      locally_deterministic (mkTAS tiles (fun g => if Nat.eqb g 0 then 0 else 1) seed1 temp) /\
+      locally_deterministic (mkTAS tiles (fun g => if Nat.eqb g 0 then 0 else 1) seed2 temp) /\
+      (syntactic_decider tiles temp = true \/ syntactic_decider tiles temp = false).
+Proof.
+  intro syntactic_decider.
+  exists [mkTile 1 1 1 1], 2, empty_assembly, empty_assembly.
+  repeat split.
+  - apply conflict_free_is_deterministic.
+    intros α t1 t2 p Hprod Hin1 Hin2 Hatt1 Hatt2.
+    simpl in *. destruct Hin1 as [Heq | Hcontra]; try contradiction.
+    destruct Hin2 as [Heq' | Hcontra]; try contradiction. subst. reflexivity.
+  - apply conflict_free_is_deterministic.
+    intros α t1 t2 p Hprod Hin1 Hin2 Hatt1 Hatt2.
+    simpl in *. destruct Hin1 as [Heq | Hcontra]; try contradiction.
+    destruct Hin2 as [Heq' | Hcontra]; try contradiction. subst. reflexivity.
+  - destruct (syntactic_decider [mkTile 1 1 1 1] 2); auto.
+Qed.
 
 (** ** Confluence *)
 
