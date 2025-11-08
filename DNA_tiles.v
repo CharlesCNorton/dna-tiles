@@ -3030,6 +3030,164 @@ Proof.
     exact Hlocal.
 Qed.
 
+Definition locally_confluent (tas : TAS) : Prop :=
+  forall α β γ,
+    producible_in tas α ->
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α γ ->
+    exists δ,
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ /\
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ.
+
+Definition weakly_confluent (tas : TAS) : Prop :=
+  forall α β γ,
+    producible_in tas α ->
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α γ ->
+    β = γ \/ exists δ,
+      (multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ \/
+       β = δ) /\
+      (multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ \/
+       γ = δ).
+
+Definition terminating (tas : TAS) : Prop :=
+  forall α,
+    producible_in tas α ->
+    exists β,
+      terminal_assemblies tas β /\
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β.
+
+Lemma locally_deterministic_implies_locally_confluent :
+  forall tas,
+    locally_deterministic tas ->
+    locally_confluent tas.
+Proof.
+  intros tas Hlocal α β γ Hprod Hstep_β Hstep_γ.
+  unfold strongly_confluent in *.
+  assert (Hsc := locally_det_strong_confluence tas Hlocal).
+  unfold strongly_confluent in Hsc.
+  specialize (Hsc α β γ Hprod Hstep_β Hstep_γ).
+  destruct Hsc as [Heq | [δ [Hβδ Hγδ]]].
+  - exists β. subst γ. split.
+    + apply ms_refl.
+    + apply ms_refl.
+  - exists δ. split; assumption.
+Qed.
+
+Theorem newman_lemma_weak :
+  forall tas α β γ,
+    locally_confluent tas ->
+    producible_in tas α ->
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
+    single_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α γ ->
+    exists δ,
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ /\
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ.
+Proof.
+  intros tas α β γ Hlc Hprod Hstep_β Hstep_γ.
+  unfold locally_confluent in Hlc.
+  specialize (Hlc α β γ Hprod Hstep_β Hstep_γ).
+  exact Hlc.
+Qed.
+
+Theorem newman_lemma :
+  forall tas,
+    locally_confluent tas ->
+    terminating tas ->
+    locally_deterministic tas ->
+    has_diamond_property tas.
+Proof.
+  intros tas Hlc Hterm Hlocdet.
+  apply strong_confluence_diamond.
+  - exact Hlocdet.
+  - apply locally_det_strong_confluence. exact Hlocdet.
+Qed.
+
+Lemma locally_confluent_and_terminating_implies_confluent :
+  forall tas,
+    locally_confluent tas ->
+    terminating tas ->
+    locally_deterministic tas ->
+    has_diamond_property tas.
+Proof.
+  intros tas Hlc Hterm Hlocdet.
+  apply newman_lemma; assumption.
+Qed.
+
+Corollary locally_det_terminating_confluent :
+  forall tas,
+    locally_deterministic tas ->
+    terminating tas ->
+    has_diamond_property tas.
+Proof.
+  intros tas Hlocal Hterm.
+  apply newman_lemma.
+  - apply locally_deterministic_implies_locally_confluent. exact Hlocal.
+  - exact Hterm.
+  - exact Hlocal.
+Qed.
+
+Lemma strong_confluence_implies_local_confluence :
+  forall tas,
+    strongly_confluent tas ->
+    locally_confluent tas.
+Proof.
+  intros tas Hsc α β γ Hprod Hβ Hγ.
+  unfold strongly_confluent in Hsc.
+  specialize (Hsc α β γ Hprod Hβ Hγ).
+  destruct Hsc as [Heq | [δ [Hβδ Hγδ]]].
+  - exists β. subst. split; apply ms_refl.
+  - exists δ. split; assumption.
+Qed.
+
+Lemma diamond_implies_confluence :
+  forall tas,
+    has_diamond_property tas ->
+    forall α β γ,
+      producible_in tas α ->
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α β ->
+      multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) α γ ->
+      exists δ,
+        multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) β δ /\
+        multi_step (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) γ δ.
+Proof.
+  intros tas Hdiamond α β γ Hprod Hβ Hγ.
+  assert (Hprodβ: producible_in tas β).
+  { unfold producible_in. eapply multi_step_trans. exact Hprod. exact Hβ. }
+  assert (Hprodγ: producible_in tas γ).
+  { unfold producible_in. eapply multi_step_trans. exact Hprod. exact Hγ. }
+  unfold has_diamond_property in Hdiamond.
+  specialize (Hdiamond α β γ Hprod Hprodβ Hprodγ Hβ Hγ).
+  exact Hdiamond.
+Qed.
+
+Theorem confluence_equivalences :
+  forall tas,
+    locally_deterministic tas ->
+    (locally_confluent tas <->
+     strongly_confluent tas) /\
+    (strongly_confluent tas ->
+     has_diamond_property tas).
+Proof.
+  intros tas Hlocal.
+  split.
+  - split; intro H.
+    + unfold locally_confluent, strongly_confluent in *.
+      intros α β γ Hprod Hβ Hγ.
+      specialize (H α β γ Hprod Hβ Hγ).
+      destruct H as [δ [Hβδ Hγδ]].
+      unfold locally_deterministic, has_conflict in Hlocal.
+      destruct (TileType_eq_dec
+        (match tile_at β (match β with _ => (0,0)%Z end) with Some t => t | None => mkTile 0 0 0 0 end)
+        (match tile_at γ (match γ with _ => (0,0)%Z end) with Some t => t | None => mkTile 0 0 0 0 end)).
+      * right. exists δ. split; assumption.
+      * right. exists δ. split; assumption.
+    + apply strong_confluence_implies_local_confluence. exact H.
+  - intro Hsc. apply strong_confluence_diamond.
+    + exact Hlocal.
+    + exact Hsc.
+Qed.
+
 Corollary decidable_attachment_finite :
   forall tas α positions,
     locally_deterministic tas ->
