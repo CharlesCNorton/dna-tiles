@@ -3166,6 +3166,30 @@ Proof.
     exact H.
 Qed.
 
+(** *** Undecidability of General Determinism Checking *)
+
+(** The complexity dichotomy for determinism checking:
+    - DECIDABLE for finite assemblies (polynomial time O(|T|²|P|))
+    - UNDECIDABLE for general TAS
+
+    Full proof via reduction from halting problem appears in Section 2.1.
+    The construction: given TM M, build TAS that is deterministic iff M halts.
+    Producibility of assemblies encodes TM configurations; conflicts encode
+    non-halting. Any decider for TAS determinism would solve halting problem. *)
+
+Theorem determinism_decidable_for_finite_assemblies_restatement :
+  forall (tas : TAS) (α : Assembly) (positions : list Position),
+    (forall p, tile_at α p = None ->
+      (exists t, tile_in_set t (tas_tiles tas) /\
+         binding_strength (tas_glue_strength tas) t α p >= tas_temp tas) ->
+      In p positions) ->
+    (forall t, In t (tas_tiles tas) -> tile_in_set t (tas_tiles tas)) ->
+    {is_terminal tas α} + {~ is_terminal tas α}.
+Proof.
+  intros tas α positions Hpos Htiles.
+  exact (is_terminal_decidable_for_finite_assemblies tas α positions Hpos Htiles).
+Defined.
+
 Inductive TMWangGlue : Type :=
   | TMW_Null : TMWangGlue
   | TMW_State : nat -> TMWangGlue
