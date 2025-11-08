@@ -1758,6 +1758,16 @@ Theorem check_determinism_algorithm_complete :
 Proof.
 Admitted.
 
+Lemma product_le_cube_sum :
+  forall a b : nat,
+    a * a * b <= (a + b) ^ 3.
+Proof.
+  intros a b.
+  assert (H: (a + b) ^ 3 = (a + b) * (a + b) * (a + b)) by (simpl; lia).
+  rewrite H.
+  destruct a; destruct b; simpl; lia.
+Qed.
+
 Theorem determinism_algorithm_polynomial_time :
   forall tas n,
     let tileset := tas_tiles tas in
@@ -1772,7 +1782,8 @@ Proof.
   exists (num_tiles * num_tiles * num_positions).
   split; [reflexivity |].
   unfold num_tiles, num_positions, tileset, positions.
-Admitted.
+  apply product_le_cube_sum.
+Qed.
 
 (** Determinism checking is in complexity class P (polynomial time) *)
 Corollary determinism_in_P :
