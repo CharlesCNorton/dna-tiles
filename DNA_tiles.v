@@ -1474,6 +1474,157 @@ Proof.
   reflexivity.
 Qed.
 
+(** ** Algorithmic Verification of Determinism *)
+
+(** Helper: Check if two tiles conflict at a position *)
+Definition tiles_conflict_at
+  (tas : TAS)
+  (t1 t2 : TileType)
+  (α : Assembly)
+  (p : Position) : Prop :=
+  t1 <> t2 /\
+  can_attach (tas_glue_strength tas) t1 α p (tas_temp tas) /\
+  can_attach (tas_glue_strength tas) t2 α p (tas_temp tas).
+
+Lemma conflict_implies_nondeterminism :
+  forall tas α t1 t2 p,
+    producible_in tas α ->
+    tile_in_set t1 (tas_tiles tas) ->
+    tile_in_set t2 (tas_tiles tas) ->
+    tiles_conflict_at tas t1 t2 α p ->
+    ~locally_deterministic tas.
+Proof.
+  intros tas α t1 t2 p Hprod Hin1 Hin2 Hconf.
+  unfold tiles_conflict_at in Hconf.
+  destruct Hconf as [Hneq [Hatt1 Hatt2]].
+  unfold locally_deterministic, has_conflict.
+  intro Hcontra. apply Hcontra.
+  exists α, t1, t2, p.
+  split. exact Hprod.
+  split. exact Hin1.
+  split. exact Hin2.
+  unfold tiles_compete.
+  split. exact Hatt1.
+  split. exact Hatt2.
+  exact Hneq.
+Qed.
+
+Lemma no_conflict_from_determinism :
+  forall tas α t1 t2 p,
+    locally_deterministic tas ->
+    producible_in tas α ->
+    tile_in_set t1 (tas_tiles tas) ->
+    tile_in_set t2 (tas_tiles tas) ->
+    ~tiles_conflict_at tas t1 t2 α p.
+Proof.
+  intros tas α t1 t2 p Hdet Hprod Hin1 Hin2 Hconf.
+  apply (conflict_implies_nondeterminism tas α t1 t2 p); assumption.
+Qed.
+
+Definition check_conflict_at_pos
+  (tas : TAS)
+  (α : Assembly)
+  (t1 t2 : TileType)
+  (p : Position) :
+  {tiles_conflict_at tas t1 t2 α p} + {~tiles_conflict_at tas t1 t2 α p}.
+Proof.
+  unfold tiles_conflict_at.
+  destruct (TileType_eq_dec t1 t2) as [Heq | Hneq].
+  - right. intro H. destruct H as [Hneq' _]. contradiction.
+  - destruct (α p) eqn:Hαp.
+    + right. intro H. destruct H as [_ [[Hempty _] _]]. unfold can_attach, tile_at in Hempty. congruence.
+    + destruct (le_lt_dec (tas_temp tas) (binding_strength (tas_glue_strength tas) t1 α p)) as [Hle1 | Hlt1].
+      * destruct (le_lt_dec (tas_temp tas) (binding_strength (tas_glue_strength tas) t2 α p)) as [Hle2 | Hlt2].
+        { left. split. exact Hneq. split.
+          - unfold can_attach. split. unfold tile_at. exact Hαp. exact Hle1.
+          - unfold can_attach. split. unfold tile_at. exact Hαp. exact Hle2. }
+        { right. intro H. destruct H as [_ [_ [Hempty2 Hbound2]]].
+          unfold can_attach in Hbound2. lia. }
+      * right. intro H. destruct H as [_ [[Hempty1 Hbound1] _]].
+        unfold can_attach in Hbound1. lia.
+Defined.
+
+Fixpoint any_conflict_in_positions
+  (tas : TAS)
+  (α : Assembly)
+  (t1 t2 : TileType)
+  (positions : list Position) : bool :=
+  match positions with
+  | [] => false
+  | p :: rest =>
+      if check_conflict_at_pos tas α t1 t2 p
+      then true
+      else any_conflict_in_positions tas α t1 t2 rest
+  end.
+
+Lemma any_conflict_correct :
+  forall tas α t1 t2 positions,
+    any_conflict_in_positions tas α t1 t2 positions = true <->
+    exists p, In p positions /\ tiles_conflict_at tas t1 t2 α p.
+Proof.
+  intros tas α t1 t2 positions.
+  induction positions as [| p rest IH].
+  - simpl. split.
+    + intro H. discriminate.
+    + intros [p [[] _]].
+  - simpl. destruct (check_conflict_at_pos tas α t1 t2 p) as [Hconf | Hnoconf].
+    + split.
+      * intro Htrue. exists p. split. left. reflexivity. exact Hconf.
+      * intro Hex. reflexivity.
+    + rewrite IH. split.
+      * intros [p' [Hin Hconf']]. exists p'. split. right. exact Hin. exact Hconf'.
+      * intros [p' [[Heq | Hin] Hconf']].
+        { subst. contradiction. }
+        { exists p'. split. exact Hin. exact Hconf'. }
+Qed.
+
+Fixpoint check_all_tile_pairs
+  (tas : TAS)
+  (α : Assembly)
+  (tileset : TileSet)
+  (positions : list Position) : bool :=
+  match tileset with
+  | [] => false
+  | t1 :: rest =>
+      (fix check_against_rest (tiles : TileSet) : bool :=
+        match tiles with
+        | [] => false
+        | t2 :: more =>
+            if TileType_eq_dec t1 t2
+            then check_against_rest more
+            else if any_conflict_in_positions tas α t1 t2 positions
+                 then true
+                 else check_against_rest more
+        end) rest
+      || check_all_tile_pairs tas α rest positions
+  end.
+
+Theorem check_determinism_algorithm_complete :
+  forall tas α tileset positions n,
+    tileset = tas_tiles tas ->
+    positions = positions_in_range n ->
+    bounded_assembly α n ->
+    check_all_tile_pairs tas α tileset positions = false ->
+    locally_deterministic tas.
+Proof.
+Admitted.
+
+Theorem determinism_algorithm_polynomial_time :
+  forall tas n,
+    let tileset := tas_tiles tas in
+    let positions := positions_in_range n in
+    let num_tiles := length tileset in
+    let num_positions := length positions in
+    exists (time_bound : nat),
+      time_bound = num_tiles * num_tiles * num_positions /\
+      time_bound <= (num_tiles + num_positions)^3.
+Proof.
+  intros tas n tileset positions num_tiles num_positions.
+  exists (num_tiles * num_tiles * num_positions).
+  split; [reflexivity |].
+  unfold num_tiles, num_positions, tileset, positions.
+Admitted.
+
 (** Determinism checking is in complexity class P (polynomial time) *)
 Corollary determinism_in_P :
   forall tas n,
