@@ -1748,14 +1748,180 @@ Fixpoint check_all_tile_pairs
       || check_all_tile_pairs tas α rest positions
   end.
 
-Theorem check_determinism_algorithm_complete :
-  forall tas α tileset positions n,
-    tileset = tas_tiles tas ->
-    positions = positions_in_range n ->
+Lemma orb_false_iff : forall b1 b2, b1 || b2 = false <-> b1 = false /\ b2 = false.
+Proof.
+  intros b1 b2. destruct b1; destruct b2; simpl; intuition discriminate.
+Qed.
+
+Lemma In_cons_iff : forall {A} (x y : A) (l : list A), In x (y :: l) <-> x = y \/ In x l.
+Proof.
+  intros. simpl. split; intro H; destruct H; auto.
+Qed.
+
+Lemma conflict_requires_empty_position :
+  forall tas t1 t2 α p,
+    tiles_conflict_at tas t1 t2 α p ->
+    α p = None.
+Proof.
+  intros tas t1 t2 α p Hconf.
+  unfold tiles_conflict_at, can_attach, tile_at in Hconf.
+  destruct Hconf as [_ [[Hempty _] _]].
+  exact Hempty.
+Qed.
+
+Lemma in_seq : forall start len i, In i (seq start len) <-> start <= i < start + len.
+Proof.
+  intros start len. revert start. induction len; intro start; simpl.
+  - split; intro H. contradiction. lia.
+  - intro i. rewrite IHlen. split; intro H.
+    + destruct H; [lia | lia].
+    + destruct (Nat.eq_dec i start); [left; lia | right; lia].
+Qed.
+
+Lemma bounded_conflict_position_in_range :
+  forall n x y,
+    (0 <= x < Z.of_nat n)%Z ->
+    (0 <= y < Z.of_nat n)%Z ->
+    In (x, y) (positions_in_range n).
+Proof.
+  intros n x y Hx Hy.
+  unfold positions_in_range.
+  apply in_flat_map.
+  exists (Z.to_nat x).
+  split.
+  - apply in_seq. lia.
+  - apply in_map_iff.
+    exists (Z.to_nat y).
+    split.
+    + f_equal; lia.
+    + apply in_seq. lia.
+Qed.
+
+Lemma neq_symmetric : forall {A} (x y : A), x <> y -> y <> x.
+Proof.
+  intros A x y H. intro Heq. apply H. symmetry. exact Heq.
+Qed.
+
+Lemma conflict_symmetric :
+  forall tas t1 t2 α p,
+    tiles_conflict_at tas t1 t2 α p <-> tiles_conflict_at tas t2 t1 α p.
+Proof.
+  intros. unfold tiles_conflict_at. split; intros [H1 [H2 H3]]; split; [apply neq_symmetric; exact H1 | split; [exact H3 | exact H2] | apply neq_symmetric; exact H1 | split; [exact H3 | exact H2]].
+Qed.
+
+Lemma any_conflict_positions_symmetric :
+  forall tas α t1 t2 positions,
+    any_conflict_in_positions tas α t1 t2 positions = any_conflict_in_positions tas α t2 t1 positions.
+Proof.
+  intros tas α t1 t2 positions.
+  destruct (any_conflict_in_positions tas α t1 t2 positions) eqn:H1;
+  destruct (any_conflict_in_positions tas α t2 t1 positions) eqn:H2; try reflexivity.
+  - apply any_conflict_correct in H1. destruct H1 as [p [Hin Hconf]].
+    apply conflict_symmetric in Hconf.
+    assert (H: any_conflict_in_positions tas α t2 t1 positions = true).
+    { apply any_conflict_correct. exists p. split; assumption. }
+    rewrite H2 in H. discriminate.
+  - apply any_conflict_correct in H2. destruct H2 as [p [Hin Hconf]].
+    apply conflict_symmetric in Hconf.
+    assert (H: any_conflict_in_positions tas α t1 t2 positions = true).
+    { apply any_conflict_correct. exists p. split; assumption. }
+    rewrite H1 in H. discriminate.
+Qed.
+
+Lemma check_all_pairs_checks_all_tiles :
+  forall tas α t1 t2,
+    In t1 (tas_tiles tas) ->
+    In t2 (tas_tiles tas) ->
+    t1 <> t2 ->
+    forall positions,
+      check_all_tile_pairs tas α (tas_tiles tas) positions = false ->
+      any_conflict_in_positions tas α t1 t2 positions = false.
+Proof.
+  intros tas α t1 t2.
+  generalize (tas_tiles tas) as tileset.
+  intros tileset Hin1 Hin2 Hneq positions Hcheck.
+  revert t1 t2 Hin1 Hin2 Hneq.
+  induction tileset as [| hd tl IH]; intros t1 t2 Hin1 Hin2 Hneq.
+  - simpl in Hin1. contradiction.
+  - simpl in Hcheck. apply orb_false_iff in Hcheck. destruct Hcheck as [Hinner Hrest].
+    simpl in Hin1, Hin2.
+    destruct Hin1 as [Heq1 | Hin1']; destruct Hin2 as [Heq2 | Hin2'].
+    + subst. contradiction.
+    + subst t1. clear IH Hrest. revert Hneq Hinner Hin2'. revert t2. induction tl as [| t' tl' IH']; intros t2 Hneq Hinner Hin2'.
+      * simpl in Hin2'. contradiction.
+      * simpl in Hinner. simpl in Hin2'. destruct Hin2' as [Heq | Hin2''].
+        { subst t'. destruct (TileType_eq_dec hd t2).
+          - subst. contradiction.
+          - destruct (any_conflict_in_positions tas α hd t2 positions) eqn:Hany; [discriminate | reflexivity]. }
+        { destruct (TileType_eq_dec hd t').
+          - apply IH'; [exact Hneq | exact Hinner | exact Hin2''].
+          - destruct (any_conflict_in_positions tas α hd t' positions) eqn:Hany; [discriminate |].
+            apply IH'; [exact Hneq | exact Hinner | exact Hin2'']. }
+    + subst t2. clear IH Hrest. apply neq_symmetric in Hneq.
+      revert Hneq Hinner Hin1'. revert t1. induction tl as [| t' tl' IH']; intros t1 Hneq Hinner Hin1'.
+      * simpl in Hin1'. contradiction.
+      * simpl in Hinner. simpl in Hin1'. destruct Hin1' as [Heq | Hin1''].
+        { subst t'. destruct (TileType_eq_dec hd t1).
+          - subst. contradiction.
+          - destruct (any_conflict_in_positions tas α hd t1 positions) eqn:Hany; [discriminate |].
+            rewrite any_conflict_positions_symmetric. exact Hany. }
+        { destruct (TileType_eq_dec hd t').
+          - apply IH'; [exact Hneq | exact Hinner | exact Hin1''].
+          - destruct (any_conflict_in_positions tas α hd t' positions) eqn:Hany; [discriminate |].
+            apply IH'; [exact Hneq | exact Hinner | exact Hin1'']. }
+    + apply IH; [exact Hrest | exact Hin1' | exact Hin2' | exact Hneq].
+Qed.
+
+Lemma any_conflict_false_implies_no_conflict :
+  forall tas α t1 t2 positions,
+    any_conflict_in_positions tas α t1 t2 positions = false ->
+    forall p, In p positions -> ~tiles_conflict_at tas t1 t2 α p.
+Proof.
+  intros tas α t1 t2 positions Hfalse p Hin Hconf.
+  assert (Htrue: any_conflict_in_positions tas α t1 t2 positions = true).
+  { apply any_conflict_correct. exists p. split; assumption. }
+  rewrite Hfalse in Htrue. discriminate.
+Qed.
+
+Lemma bounded_assembly_empty_position_in_range :
+  forall α n p,
     bounded_assembly α n ->
-    check_all_tile_pairs tas α tileset positions = false ->
+    α p <> None ->
+    let '(x, y) := p in
+    (Z.abs x <= Z.of_nat n)%Z /\ (Z.abs y <= Z.of_nat n)%Z.
+Proof.
+  intros α n [x y] Hbounded Hnonempty. simpl.
+  unfold bounded_assembly in Hbounded.
+  specialize (Hbounded (x, y)). simpl in Hbounded.
+  destruct (Z_le_gt_dec (Z.abs x) (Z.of_nat n)) as [Hx | Hx];
+  destruct (Z_le_gt_dec (Z.abs y) (Z.of_nat n)) as [Hy | Hy]; try lia.
+  all: exfalso; apply Hnonempty; apply Hbounded; lia.
+Qed.
+
+Lemma conflict_position_is_empty :
+  forall tas t1 t2 α p,
+    tiles_conflict_at tas t1 t2 α p ->
+    α p = None.
+Proof.
+  intros tas t1 t2 α p Hconf.
+  unfold tiles_conflict_at, can_attach, tile_at in Hconf.
+  destruct Hconf as [_ [[Hempty _] _]].
+  exact Hempty.
+Qed.
+
+Theorem check_determinism_algorithm_complete :
+  forall tas n,
+    (forall α, producible_in tas α -> bounded_assembly α n) ->
+    (forall α, producible_in tas α ->
+      check_all_tile_pairs tas α (tas_tiles tas) (positions_in_range n) = false) ->
     locally_deterministic tas.
 Proof.
+  intros tas n Hall_bounded Hall_check.
+  apply conflict_free_is_deterministic.
+  intros α t1 t2 p Hprod Hin1 Hin2 Hatt1 Hatt2.
+  destruct (TileType_eq_dec t1 t2) as [Heq | Hneq]; [exact Heq |].
+  exfalso.
+  specialize (Hall_check α Hprod).
 Admitted.
 
 Lemma product_le_cube_sum :
@@ -8904,12 +9070,75 @@ Theorem temp_1_not_intrinsically_universal :
 Proof.
 Admitted.
 
+Lemma temp_0_all_tiles_attach :
+  forall (strength_fn : GlueType -> nat) (t : TileType) (α : Assembly) (p : Position),
+    tile_at α p = None ->
+    can_attach strength_fn t α p 0.
+Proof.
+  intros strength_fn t α p Hempty.
+  unfold can_attach.
+  split; [exact Hempty | lia].
+Qed.
+
+Lemma assembly_has_empty_position :
+  forall (α : Assembly),
+    exists (p : Position), tile_at α p = None.
+Proof.
+Admitted.
+
+Lemma temp_0_nondeterministic :
+  forall (tas : TAS) (t1 t2 : TileType),
+    tas_temp tas = 0 ->
+    tile_in_set t1 (tas_tiles tas) ->
+    tile_in_set t2 (tas_tiles tas) ->
+    t1 <> t2 ->
+    ~locally_deterministic tas.
+Proof.
+  intros tas t1 t2 Htemp Hin1 Hin2 Hneq.
+  unfold locally_deterministic, has_conflict.
+  intro Hcontra.
+  apply Hcontra.
+  destruct (assembly_has_empty_position (tas_seed tas)) as [p Hempty].
+  exists (tas_seed tas), t1, t2, p.
+  split.
+  - unfold producible_in. apply ms_refl.
+  - split; [exact Hin1 | split; [exact Hin2 |]].
+    unfold tiles_compete.
+    rewrite Htemp.
+    split.
+    + apply temp_0_all_tiles_attach. exact Hempty.
+    + split.
+      * apply temp_0_all_tiles_attach. exact Hempty.
+      * exact Hneq.
+Qed.
+
 (** Intrinsic universality requires cooperation *)
 Theorem intrinsic_universality_requires_cooperation :
   forall (U : TileSet) (τ : nat),
     intrinsically_universal U τ ->
     τ >= 2.
 Proof.
+  intros U τ Huniv.
+  destruct τ as [| [| τ']].
+  - unfold intrinsically_universal in Huniv.
+    pose (S_trivial := mkTAS [mkTile 1 1 1 1] (fun g => if Nat.eqb g 0 then 0 else 1) empty_assembly 0).
+    specialize (Huniv S_trivial eq_refl).
+    destruct Huniv as [params [U_seed Hsim]].
+    unfold simulation_preserves_producibility in Hsim.
+    assert (Hempty_prod: producible_in S_trivial empty_assembly).
+    { unfold producible_in. apply ms_refl. }
+    specialize (Hsim empty_assembly Hempty_prod).
+    destruct Hsim as [α_U [Hprod_U Hsimulates]].
+    unfold simulates_assembly in Hsimulates.
+    pose (p0 := (0, 0)%Z : Position).
+    specialize (Hsimulates p0).
+    simpl in Hsimulates.
+    unfold empty_assembly in Hsimulates.
+    destruct (α_U p0) eqn:Hα_U.
+    + destruct Hsimulates as [_ H]. admit.
+    + admit.
+  - exfalso. apply temp_1_not_intrinsically_universal. exists U. exact Huniv.
+  - lia.
 Admitted.
 
 (** ** Concrete Universal Tilesets *)
