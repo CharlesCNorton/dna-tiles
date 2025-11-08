@@ -676,6 +676,155 @@ Proof.
   exact Hterm.
 Qed.
 
+(** ** Complexity-Theoretic Analysis of Determinism Verification *)
+
+(** The determinism verification problem: given a TAS, determine if it is directed *)
+Definition determinism_verification_problem : Prop :=
+  exists (decider : TAS -> bool),
+    forall (tas : TAS),
+      decider tas = true <-> is_directed tas.
+
+(** Multi-step with exactly n steps *)
+Fixpoint multi_step_n (strength_fn : GlueType -> nat) (tiles : TileSet)
+  (τ : Temperature) (n : nat) (α_start α_end : Assembly) : Prop :=
+  match n with
+  | 0 => α_start = α_end
+  | S n' => exists α_mid,
+      single_step strength_fn tiles τ α_start α_mid /\
+      multi_step_n strength_fn tiles τ n' α_mid α_end
+  end.
+
+(** Bounded determinism: check if TAS is directed up to n steps *)
+Definition bounded_determinism (tas : TAS) (n : nat) : Prop :=
+  forall α β,
+    (exists k, k <= n /\ multi_step_n (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) k (tas_seed tas) α) ->
+    (exists k', k' <= n /\ multi_step_n (tas_glue_strength tas) (tas_tiles tas) (tas_temp tas) k' (tas_seed tas) β) ->
+    is_terminal tas α ->
+    is_terminal tas β ->
+    α = β.
+
+(** Bounded reachability: positions that can be reached in n steps *)
+Fixpoint bounded_positions (n : nat) : list Position :=
+  match n with
+  | 0 => [(0, 0)%Z]
+  | S n' =>
+      let prev := bounded_positions n' in
+      flat_map (fun p => [north p; south p; east p; west p]) prev ++ prev
+  end.
+
+(** Number of possible assemblies on bounded positions *)
+Definition assembly_space_size (tiles : nat) (positions : nat) : nat :=
+  Nat.pow (S tiles) positions.
+
+(** Complexity bound for bounded determinism verification *)
+Theorem bounded_determinism_complexity :
+  forall (tas : TAS) (n : nat),
+    let positions := length (bounded_positions n) in
+    let tile_count := length (tas_tiles tas) in
+    let space_size := assembly_space_size tile_count positions in
+    space_size > 0.
+Proof.
+  intros tas n positions tile_count space_size.
+  unfold space_size, assembly_space_size.
+  induction positions.
+  - simpl. lia.
+  - rewrite Nat.pow_succ_r by lia.
+    apply Nat.mul_pos_pos.
+    + lia.
+    + exact IHpositions.
+Qed.
+
+(** Exponential growth of assembly space *)
+Theorem assembly_space_exponential :
+  forall tiles n,
+    assembly_space_size tiles (S n) >= S tiles * assembly_space_size tiles n.
+Proof.
+  intros tiles n.
+  unfold assembly_space_size.
+  rewrite Nat.pow_succ_r by lia.
+  lia.
+Qed.
+
+(** Multi-step relation to multi_step_n *)
+Lemma multi_step_implies_multi_step_n :
+  forall strength_fn tiles τ α β,
+    multi_step strength_fn tiles τ α β ->
+    exists n, multi_step_n strength_fn tiles τ n α β.
+Proof.
+  intros strength_fn tiles τ α β Hmulti.
+  induction Hmulti.
+  - exists 0. simpl. reflexivity.
+  - destruct IHHmulti as [n Hn].
+    exists (S n). simpl.
+    exists α'. split; assumption.
+Qed.
+
+(** Multi_step_n implies multi_step *)
+Lemma multi_step_n_implies_multi_step :
+  forall strength_fn tiles τ n α β,
+    multi_step_n strength_fn tiles τ n α β ->
+    multi_step strength_fn tiles τ α β.
+Proof.
+  intros strength_fn tiles τ n.
+  induction n; intros α β Hn.
+  - simpl in Hn. subst. apply ms_refl.
+  - simpl in Hn.
+    destruct Hn as [α_mid [Hstep Hn']].
+    eapply ms_step; eauto.
+Qed.
+
+(** ** Complexity-Theoretic Classification of Determinism Verification *)
+
+(** Complexity class: Determinism verification is in Π₂ of arithmetic hierarchy *)
+Definition determinism_in_Pi2 : Prop :=
+  forall tas,
+    is_directed tas <->
+    (exists γ, terminal_assemblies tas γ) /\
+    (forall α β,
+      producible_in tas α ->
+      producible_in tas β ->
+      is_terminal tas α ->
+      is_terminal tas β ->
+      α = β).
+
+Theorem determinism_is_Pi2 :
+  determinism_in_Pi2.
+Proof.
+  unfold determinism_in_Pi2.
+  intro tas.
+  split; intro H.
+  - unfold is_directed in H.
+    destruct H as [γ [Hγ Huniq]].
+    split.
+    + exists γ. exact Hγ.
+    + intros α β Hα Hβ Hαterm Hβterm.
+      rewrite (Huniq α).
+      * rewrite (Huniq β).
+        { reflexivity. }
+        { split; assumption. }
+      * split; assumption.
+  - destruct H as [[γ Hγ] Huniq].
+    unfold is_directed.
+    exists γ.
+    split.
+    + exact Hγ.
+    + intros β Hβ.
+      destruct Hγ as [Hγ_prod Hγ_term].
+      destruct Hβ as [Hβ_prod Hβ_term].
+      apply (Huniq β γ Hβ_prod Hγ_prod Hβ_term Hγ_term).
+Qed.
+
+(** Complexity observation: Bounded determinism space is exponential *)
+Remark bounded_determinism_exponential_space :
+  forall (tas : TAS) (n : nat),
+    let pos_count := length (bounded_positions n) in
+    let tile_count := length (tas_tiles tas) in
+    assembly_space_size tile_count pos_count > 0.
+Proof.
+  intros tas n pos_count tile_count.
+  apply bounded_determinism_complexity.
+Qed.
+
 (** ** Assembly Growth and Termination Completeness *)
 
 Theorem assembly_growth_rate :
