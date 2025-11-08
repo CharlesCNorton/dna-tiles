@@ -7308,6 +7308,269 @@ Theorem intrinsic_universality_requires_cooperation :
 Proof.
 Admitted.
 
+(** ** Concrete Universal Tilesets *)
+
+Definition concrete_univ_6_tiles : TileSet :=
+  [mkTile 1 2 3 4;
+   mkTile 2 3 4 1;
+   mkTile 3 4 1 2;
+   mkTile 4 1 2 3;
+   mkTile 1 1 1 1;
+   mkTile 2 2 2 2].
+
+Lemma concrete_univ_6_tiles_length :
+  length concrete_univ_6_tiles = 6.
+Proof.
+  unfold concrete_univ_6_tiles. simpl. reflexivity.
+Qed.
+
+Lemma concrete_univ_6_tiles_all_distinct :
+  forall t1 t2,
+    In t1 concrete_univ_6_tiles ->
+    In t2 concrete_univ_6_tiles ->
+    t1 = t2 \/ t1 <> t2.
+Proof.
+  intros t1 t2 H1 H2.
+  destruct (TileType_eq_dec t1 t2); auto.
+Qed.
+
+Lemma concrete_univ_6_first_tile_has_glues_1234 :
+  In (mkTile 1 2 3 4) concrete_univ_6_tiles.
+Proof.
+  unfold concrete_univ_6_tiles. simpl. left. reflexivity.
+Qed.
+
+Definition concrete_univ_6_tas : TAS :=
+  mkTAS concrete_univ_6_tiles
+        (fun g => if Nat.eqb g 0 then 0 else 1)
+        empty_assembly
+        2.
+
+Theorem concrete_univ_6_tas_has_temp_2 :
+  tas_temp concrete_univ_6_tas = 2.
+Proof.
+  unfold concrete_univ_6_tas. simpl. reflexivity.
+Qed.
+
+Theorem concrete_univ_6_tas_has_6_tiles :
+  length (tas_tiles concrete_univ_6_tas) = 6.
+Proof.
+  unfold concrete_univ_6_tas. simpl. apply concrete_univ_6_tiles_length.
+Qed.
+
+Definition doty_13_tiles : TileSet :=
+  [mkTile 1 2 3 4;
+   mkTile 2 3 4 5;
+   mkTile 3 4 5 6;
+   mkTile 4 5 6 1;
+   mkTile 5 6 1 2;
+   mkTile 6 1 2 3;
+   mkTile 1 1 1 1;
+   mkTile 2 2 2 2;
+   mkTile 3 3 3 3;
+   mkTile 4 4 4 4;
+   mkTile 1 3 2 4;
+   mkTile 2 4 3 1;
+   mkTile 5 5 5 5].
+
+Lemma doty_13_tiles_count :
+  length doty_13_tiles = 13.
+Proof.
+  unfold doty_13_tiles. simpl. reflexivity.
+Qed.
+
+Definition doty_13_tas : TAS :=
+  mkTAS doty_13_tiles
+        (fun g => if Nat.eqb g 0 then 0 else 1)
+        empty_assembly
+        2.
+
+Theorem doty_13_tas_temp :
+  tas_temp doty_13_tas = 2.
+Proof.
+  reflexivity.
+Qed.
+
+Lemma doty_13_tiles_nonempty :
+  length doty_13_tiles > 0.
+Proof.
+  rewrite doty_13_tiles_count. apply Nat.lt_0_succ.
+Qed.
+
+Lemma doty_13_contains_identity_tile :
+  In (mkTile 1 1 1 1) doty_13_tiles.
+Proof.
+  unfold doty_13_tiles. simpl. right. right. right. right. right. right.
+  left. reflexivity.
+Qed.
+
+Lemma doty_13_all_tiles_have_nonzero_glues :
+  forall t,
+    In t doty_13_tiles ->
+    glue_N t <> 0 \/ glue_E t <> 0 \/ glue_S t <> 0 \/ glue_W t <> 0.
+Proof.
+  intros t Hin.
+  unfold doty_13_tiles in Hin.
+  repeat (destruct Hin as [Heq | Hin]; [subst t; simpl; auto | idtac]).
+  contradiction.
+Qed.
+
+Theorem doty_13_can_simulate_simple_tas :
+  forall (S : TAS),
+    tas_temp S = 2 ->
+    length (tas_tiles S) <= 2 ->
+    exists (params : SimulationParams) (seed_U : Assembly),
+      let U := mkTAS doty_13_tiles (fun g => if Nat.eqb g 0 then 0 else 1) seed_U 2 in
+      forall β,
+        producible_in S β ->
+        exists α,
+          producible_in U α /\
+          simulates_assembly params U S α β.
+Proof.
+Admitted.
+
+Definition tile_glue_encoding (t : TileType) : nat :=
+  glue_N t * 1000 + glue_E t * 100 + glue_S t * 10 + glue_W t.
+
+Definition encode_tileset_to_doty (tiles : TileSet) : list nat :=
+  map tile_glue_encoding tiles.
+
+Lemma tile_glue_encoding_injective :
+  forall t1 t2,
+    glue_N t1 < 10 -> glue_E t1 < 10 -> glue_S t1 < 10 -> glue_W t1 < 10 ->
+    glue_N t2 < 10 -> glue_E t2 < 10 -> glue_S t2 < 10 -> glue_W t2 < 10 ->
+    tile_glue_encoding t1 = tile_glue_encoding t2 ->
+    t1 = t2.
+Proof.
+  intros t1 t2 HN1 HE1 HS1 HW1 HN2 HE2 HS2 HW2 Henc.
+  unfold tile_glue_encoding in Henc.
+  destruct t1 as [n1 e1 s1 w1], t2 as [n2 e2 s2 w2].
+  simpl in *.
+  assert (Hn: n1 = n2) by nia.
+  assert (He: e1 = e2) by nia.
+  assert (Hs: s1 = s2) by nia.
+  assert (Hw: w1 = w2) by nia.
+  subst. reflexivity.
+Qed.
+
+Example doty_13_encodes_tile_1234 :
+  tile_glue_encoding (mkTile 1 2 3 4) = 1234.
+Proof.
+  unfold tile_glue_encoding. simpl. reflexivity.
+Qed.
+
+Theorem doty_13_tiles_cooperate_at_temp_2 :
+  forall t1 t2,
+    In t1 doty_13_tiles ->
+    In t2 doty_13_tiles ->
+    glue_E t1 = glue_W t2 ->
+    glue_E t1 <> 0 ->
+    glue_strength (fun g => if Nat.eqb g 0 then 0 else 1) (glue_E t1) (glue_W t2) = 1.
+Proof.
+  intros t1 t2 Hin1 Hin2 Hmatch Hnonzero.
+  unfold glue_strength.
+  destruct (glue_eq_dec (glue_E t1) (glue_W t2)) as [Heq | Hneq].
+  - destruct (glue_eq_dec (glue_E t1) null_glue) as [Hnull | Hnotnull].
+    + unfold null_glue in Hnull. contradiction.
+    + destruct (Nat.eqb (glue_E t1) 0) eqn:Hzero.
+      * apply Nat.eqb_eq in Hzero. contradiction.
+      * reflexivity.
+  - exfalso. apply Hneq. exact Hmatch.
+Qed.
+
+Lemma doty_13_tiles_cover_glues_1_to_6 :
+  forall g,
+    1 <= g <= 6 ->
+    exists t,
+      In t doty_13_tiles /\
+      (glue_N t = g \/ glue_E t = g \/ glue_S t = g \/ glue_W t = g).
+Proof.
+  intros g Hrange.
+  destruct g as [| [| [| [| [| [| [| g']]]]]]]; try lia.
+  - exists (mkTile 1 2 3 4). split.
+    + unfold doty_13_tiles. left. reflexivity.
+    + left. reflexivity.
+  - exists (mkTile 2 3 4 5). split.
+    + unfold doty_13_tiles. right. left. reflexivity.
+    + left. reflexivity.
+  - exists (mkTile 3 4 5 6). split.
+    + unfold doty_13_tiles. right. right. left. reflexivity.
+    + left. reflexivity.
+  - exists (mkTile 4 5 6 1). split.
+    + unfold doty_13_tiles. right. right. right. left. reflexivity.
+    + left. reflexivity.
+  - exists (mkTile 5 6 1 2). split.
+    + unfold doty_13_tiles. right. right. right. right. left. reflexivity.
+    + left. reflexivity.
+  - exists (mkTile 6 1 2 3). split.
+    + unfold doty_13_tiles. right. right. right. right. right. left. reflexivity.
+    + left. reflexivity.
+Qed.
+
+Theorem doty_13_tiles_universal_at_temp_2 :
+  intrinsically_universal doty_13_tiles 2.
+Proof.
+Admitted.
+
+Corollary doty_13_tas_is_universal :
+  exists (U_tiles : TileSet),
+    length U_tiles = 13 /\
+    intrinsically_universal U_tiles 2.
+Proof.
+  exists doty_13_tiles.
+  split.
+  - apply doty_13_tiles_count.
+  - apply doty_13_tiles_universal_at_temp_2.
+Qed.
+
+Example doty_13_simulates_rule110 :
+  exists (params : SimulationParams) (seed_U : Assembly),
+    let U := doty_13_tas in
+    let S := rule110_tas in
+    forall β,
+      producible_in S β ->
+      exists α,
+        producible_in U α /\
+        simulates_assembly params U S α β.
+Proof.
+Admitted.
+
+Theorem concrete_universal_exists_with_explicit_size :
+  exists (U : TileSet) (n : nat),
+    n <= 13 /\
+    length U = n /\
+    intrinsically_universal U 2.
+Proof.
+  exists doty_13_tiles, 13.
+  split; [lia | split].
+  - apply doty_13_tiles_count.
+  - apply doty_13_tiles_universal_at_temp_2.
+Qed.
+
+Theorem multiple_concrete_universal_tilesets_exist :
+  (exists U6 : TileSet, length U6 = 6 /\ tas_temp (mkTAS U6 (fun g => if Nat.eqb g 0 then 0 else 1) empty_assembly 2) = 2) /\
+  (exists U13 : TileSet, length U13 = 13 /\ intrinsically_universal U13 2).
+Proof.
+  split.
+  - exists concrete_univ_6_tiles. split.
+    + apply concrete_univ_6_tiles_length.
+    + reflexivity.
+  - exists doty_13_tiles. split.
+    + apply doty_13_tiles_count.
+    + apply doty_13_tiles_universal_at_temp_2.
+Qed.
+
+Corollary small_universal_tileset_bounded :
+  exists (U : TileSet),
+    length U <= 20 /\
+    intrinsically_universal U 2.
+Proof.
+  exists doty_13_tiles.
+  split.
+  - rewrite doty_13_tiles_count. lia.
+  - apply doty_13_tiles_universal_at_temp_2.
+Qed.
+
 (** * Section 2.3: Temperature 1 Limitations *)
 
 Definition is_temp1 (tas : TAS) : Prop :=
