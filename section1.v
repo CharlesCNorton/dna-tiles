@@ -20,6 +20,8 @@ Require Import Coq.Arith.Arith.
 Require Import Coq.Arith.Compare_dec.
 Require Import Coq.micromega.Lia.
 Require Import Coq.Logic.Eqdep_dec.
+Require Import Coq.Classes.Morphisms.
+Require Import Coq.Setoids.Setoid.
 
 Import ListNotations.
 Open Scope list_scope.
@@ -313,6 +315,31 @@ Proof.
   unfold assembly_equiv in *.
   rewrite Hab. apply Hbc.
 Qed.
+
+(** ** Setoid Instance for Assembly Equivalence *)
+
+(** Register assembly_equiv as a setoid relation for automatic rewriting *)
+Add Parametric Relation : Assembly assembly_equiv
+  reflexivity proved by assembly_equiv_refl
+  symmetry proved by assembly_equiv_sym
+  transitivity proved by assembly_equiv_trans
+  as assembly_equiv_setoid.
+
+(** Morphisms: Register operations that respect assembly equivalence *)
+
+(** tile_at respects assembly equivalence *)
+Add Parametric Morphism : tile_at
+  with signature assembly_equiv ==> eq ==> eq
+  as tile_at_morphism.
+Proof.
+  intros α β Heq p.
+  unfold assembly_equiv in Heq.
+  apply Heq.
+Qed.
+
+(** Note: Additional morphisms for support, assembly_union, add_tile, remove_tile,
+    domain_subset, and binding_strength are defined later, after those operations
+    are introduced in their respective sections. *)
 
 (** Empty assembly properties *)
 Lemma empty_assembly_has_no_tiles : forall p,
@@ -968,6 +995,29 @@ Proof.
   repeat split; intro H; inversion H; lia.
 Qed.
 
+(** Neighbors list has no duplicates *)
+Theorem neighbors_NoDup : forall p,
+  NoDup (neighbors p).
+Proof.
+  intro p.
+  pose proof (directions_distinct p) as [Hns [Hne [Hnw [Hse [Hsw Hew]]]]].
+  unfold neighbors.
+  constructor.
+  - intro H. simpl in H. destruct H as [H | [H | [H | []]]].
+    + apply Hne. symmetry. exact H.
+    + apply Hns. symmetry. exact H.
+    + apply Hnw. symmetry. exact H.
+  - constructor.
+    + intro H. simpl in H. destruct H as [H | [H | []]].
+      * apply Hse. exact H.
+      * apply Hew. symmetry. exact H.
+    + constructor.
+      * intro H. simpl in H. destruct H as [H | []].
+        apply Hsw. symmetry. exact H.
+      * constructor. intro H. simpl in H. destruct H.
+        constructor.
+Qed.
+
 (** Adjacency decidability *)
 
 Lemma adjacent_dec : forall p1 p2,
@@ -1080,6 +1130,19 @@ Proof.
   - apply distance_one_implies_adjacent.
 Qed.
 
+(** Adjacent positions are distinct *)
+Theorem adjacent_neq : forall p q,
+  adjacent p q -> p <> q.
+Proof.
+  intros p q Hadj Heq.
+  subst.
+  assert (Hdist: manhattan_distance q q = 1%Z).
+  { apply adjacent_implies_distance_one. exact Hadj. }
+  assert (H0: manhattan_distance q q = 0%Z).
+  { apply manhattan_distance_zero_iff. reflexivity. }
+  rewrite H0 in Hdist. discriminate.
+Qed.
+
 (** Bounding boxes *)
 
 Definition min_Z (z1 z2 : Z) : Z := if (z1 <=? z2)%Z then z1 else z2.
@@ -1137,7 +1200,7 @@ Proof.
   f_equal; apply (Z.mul_cancel_l _ _ (Z.of_nat k)); auto.
 Qed.
 
-Lemma scale_pos_zero_is_identity : forall p,
+Lemma scale_pos_one_is_identity : forall p,
   scale_pos 1 p = p.
 Proof.
   intros [x y]. unfold scale_pos. simpl. f_equal; apply Z.mul_1_l.
@@ -1256,6 +1319,17 @@ Proof.
   intros p [t Ht].
   unfold tile_at, empty_assembly in Ht.
   discriminate.
+Qed.
+
+(** support respects assembly equivalence *)
+Add Parametric Morphism : support
+  with signature assembly_equiv ==> eq ==> iff
+  as support_morphism.
+Proof.
+  intros α β Heq p.
+  split; intro H; unfold support in *; destruct H as [t Ht];
+  exists t; unfold assembly_equiv in Heq;
+  [rewrite <- Heq | rewrite Heq]; exact Ht.
 Qed.
 
 Theorem empty_assembly_is_finite :
@@ -1493,6 +1567,17 @@ Proof.
   reflexivity.
 Qed.
 
+(** add_tile respects assembly equivalence *)
+Add Parametric Morphism p t : (fun α => add_tile α p t)
+  with signature assembly_equiv ==> assembly_equiv
+  as add_tile_morphism.
+Proof.
+  intros α β Heq.
+  unfold assembly_equiv, add_tile, tile_at in *.
+  intro p'.
+  destruct (Position_eq_dec p' p) as [Heqp | Hneqp]; [reflexivity | apply Heq].
+Qed.
+
 Lemma add_tile_preserves_finite : forall α p t,
   tile_at α p = None ->
   finite_assembly α ->
@@ -1544,6 +1629,17 @@ Proof.
   unfold remove_tile, tile_at.
   destruct (Position_eq_dec p' p); try contradiction.
   reflexivity.
+Qed.
+
+(** remove_tile respects assembly equivalence *)
+Add Parametric Morphism p : (fun α => remove_tile α p)
+  with signature assembly_equiv ==> assembly_equiv
+  as remove_tile_morphism.
+Proof.
+  intros α β Heq.
+  unfold assembly_equiv, remove_tile, tile_at in *.
+  intro p'.
+  destruct (Position_eq_dec p' p) as [Heqp | Hneqp]; [reflexivity | apply Heq].
 Qed.
 
 Lemma remove_tile_preserves_finite : forall α p,
@@ -1730,6 +1826,27 @@ Proof.
     rewrite Hα in Hba. discriminate.
 Qed.
 
+(** domain_subset respects assembly equivalence *)
+Add Parametric Morphism : domain_subset
+  with signature assembly_equiv ==> assembly_equiv ==> iff
+  as domain_subset_morphism.
+Proof.
+  intros α1 α2 Heq1 β1 β2 Heq2.
+  split; intro H; unfold domain_subset in *; intros p t Ht.
+  - unfold assembly_equiv, tile_at in Heq1.
+    assert (Ht': tile_at α1 p = Some t).
+    { rewrite Heq1. exact Ht. }
+    apply H in Ht'.
+    unfold assembly_equiv, tile_at in Heq2.
+    rewrite <- Heq2. exact Ht'.
+  - unfold assembly_equiv, tile_at in Heq1.
+    assert (Ht': tile_at α2 p = Some t).
+    { rewrite <- Heq1. exact Ht. }
+    apply H in Ht'.
+    unfold assembly_equiv, tile_at in Heq2.
+    rewrite Heq2. exact Ht'.
+Qed.
+
 (** Assembly consistency: assemblies agree where they overlap *)
 
 Definition assembly_consistent (α β : Assembly) : Prop :=
@@ -1844,6 +1961,24 @@ Proof.
   intros α β p Hα.
   unfold tile_at, assembly_union. simpl.
   rewrite Hα. reflexivity.
+Qed.
+
+(** assembly_union respects assembly equivalence *)
+Add Parametric Morphism : assembly_union
+  with signature assembly_equiv ==> assembly_equiv ==> assembly_equiv
+  as assembly_union_morphism.
+Proof.
+  intros α1 α2 Heq1 β1 β2 Heq2.
+  unfold assembly_equiv, assembly_union in *.
+  intro p.
+  specialize (Heq1 p). specialize (Heq2 p).
+  unfold tile_at in *.
+  destruct (α1 p) as [t1 |] eqn:Ha1; destruct (α2 p) as [t2 |] eqn:Ha2.
+  - assert (Some t1 = Some t2) by (rewrite <- Heq1; reflexivity).
+    injection H as <-. reflexivity.
+  - exfalso. assert (Some t1 = None) by (rewrite <- Heq1; reflexivity). discriminate.
+  - exfalso. assert (None = Some t2) by (rewrite <- Heq1; reflexivity). discriminate.
+  - exact Heq2.
 Qed.
 
 Lemma assembly_union_left_subset : forall α β,
@@ -2093,6 +2228,268 @@ Proof.
   - reflexivity.
 Qed.
 
+(** ** Real-World Example: Building and Verifying a 2×2 Square Assembly *)
+
+(** This example demonstrates a realistic use case: constructing a 2×2 square
+    of tiles and proving its geometric and structural properties using all
+    major theorems from Section 1.1. This exercises:
+    - Type system and tile matching
+    - Well-formed TAS construction
+    - Geometric reasoning with adjacency and distance
+    - Assembly operations (add_tile, union)
+    - Finiteness, consistency, and subset relations
+*)
+
+(** Tiles designed to form a 2×2 square with matching glues *)
+Definition square_tile_NW : TileType := mkTile 0 1 2 0.  (* NW corner: E=1, S=2 *)
+Definition square_tile_NE : TileType := mkTile 0 0 3 1.  (* NE corner: W=1, S=3 *)
+Definition square_tile_SW : TileType := mkTile 2 4 0 0.  (* SW corner: N=2, E=4 *)
+Definition square_tile_SE : TileType := mkTile 3 0 0 4.  (* SE corner: N=3, W=4 *)
+
+(** The four positions forming the 2×2 square *)
+Definition pos_NW : Position := (0, 1)%Z.
+Definition pos_NE : Position := (1, 1)%Z.
+Definition pos_SW : Position := (0, 0)%Z.
+Definition pos_SE : Position := (1, 0)%Z.
+
+(** Build the square assembly incrementally *)
+Definition square_step1 : Assembly := single_tile_assembly pos_SW square_tile_SW.
+Definition square_step2 : Assembly := add_tile square_step1 pos_SE square_tile_SE.
+Definition square_step3 : Assembly := add_tile square_step2 pos_NW square_tile_NW.
+Definition square_2x2 : Assembly := add_tile square_step3 pos_NE square_tile_NE.
+
+(** The tileset and TAS for the 2×2 square *)
+Definition square_tileset : TileSet :=
+  [square_tile_NW; square_tile_NE; square_tile_SW; square_tile_SE].
+
+Definition square_TAS : TAS :=
+  mkTAS square_tileset standard_glue_strength square_step1 2.
+
+(** Theorem: The square assembly has all expected geometric properties *)
+Theorem square_2x2_properties :
+  (* Type system: All tiles are distinct *)
+  (square_tile_NW <> square_tile_NE) /\
+  (square_tile_SW <> square_tile_SE) /\
+
+  (* Tile matching: Adjacent tiles have matching glues *)
+  (tiles_match square_tile_SW square_tile_SE East) /\
+  (tiles_match square_tile_SW square_tile_NW North) /\
+  (tiles_match square_tile_NW square_tile_NE East) /\
+  (tiles_match square_tile_SE square_tile_NE North) /\
+
+  (* Well-formedness: TAS is well-formed *)
+  (well_formed_tas square_TAS) /\
+
+  (* Geometry: All four positions are pairwise adjacent where expected *)
+  (adjacent pos_SW pos_SE) /\
+  (adjacent pos_SW pos_NW) /\
+  (adjacent pos_NW pos_NE) /\
+  (adjacent pos_SE pos_NE) /\
+
+  (* Geometry: Diagonal positions are NOT adjacent *)
+  (~adjacent pos_SW pos_NE) /\
+  (~adjacent pos_NW pos_SE) /\
+
+  (* Distance: Adjacent tiles have manhattan distance 1 *)
+  (manhattan_distance pos_SW pos_SE = 1%Z) /\
+  (manhattan_distance pos_SW pos_NW = 1%Z) /\
+  (manhattan_distance pos_NW pos_NE = 1%Z) /\
+  (manhattan_distance pos_SE pos_NE = 1%Z) /\
+
+  (* Distance: Diagonals have manhattan distance 2 *)
+  (manhattan_distance pos_SW pos_NE = 2%Z) /\
+  (manhattan_distance pos_NW pos_SE = 2%Z) /\
+
+  (* Assembly operations: Each step contains tiles at correct positions *)
+  (tile_at square_2x2 pos_SW = Some square_tile_SW) /\
+  (tile_at square_2x2 pos_SE = Some square_tile_SE) /\
+  (tile_at square_2x2 pos_NW = Some square_tile_NW) /\
+  (tile_at square_2x2 pos_NE = Some square_tile_NE) /\
+
+  (* Finiteness: All intermediate assemblies are finite *)
+  (finite_assembly square_step1) /\
+  (finite_assembly square_step2) /\
+  (finite_assembly square_step3) /\
+  (finite_assembly square_2x2) /\
+
+  (* Domain subset: Assembly grows monotonically *)
+  (square_step1 ⊆ square_step2) /\
+  (square_step2 ⊆ square_step3) /\
+  (square_step3 ⊆ square_2x2) /\
+
+  (* Consistency: All intermediate assemblies are mutually consistent *)
+  (square_step1 ~ square_step2) /\
+  (square_step2 ~ square_step3) /\
+  (square_step3 ~ square_2x2) /\
+
+  (* Assembly size: Final assembly has 4 tiles *)
+  (assembly_size square_2x2 [pos_SW; pos_SE; pos_NW; pos_NE] = 4) /\
+
+  True.
+Proof.
+  split. { intro H. inversion H. }
+  split. { intro H. inversion H. }
+  split. { unfold tiles_match. simpl. unfold tiles_match_east. simpl. reflexivity. }
+  split. { unfold tiles_match. simpl. unfold tiles_match_north. simpl. reflexivity. }
+  split. { unfold tiles_match. simpl. unfold tiles_match_east. simpl. reflexivity. }
+  split. { unfold tiles_match. simpl. unfold tiles_match_north. simpl. reflexivity. }
+  split.
+  { unfold well_formed_tas, seed_uses_tileset, glue_fn_respects_null, square_TAS. simpl.
+    split.
+    - intros p t Ht. unfold tile_at, square_step1, single_tile_assembly in Ht.
+      destruct (Position_eq_dec p pos_SW); try discriminate.
+      injection Ht as <-. unfold tile_in_set. simpl. right. right. left. reflexivity.
+    - apply standard_glue_is_valid. }
+
+  (* Adjacency proofs *)
+  split. { unfold adjacent, neighbors, pos_SW, pos_SE, east. simpl. right. left. reflexivity. }
+  split. { unfold adjacent, neighbors, pos_SW, pos_NW, north. simpl. left. reflexivity. }
+  split. { unfold adjacent, neighbors, pos_NW, pos_NE, east. simpl. right. left. reflexivity. }
+  split. { unfold adjacent, neighbors, pos_SE, pos_NE, north. simpl. left. reflexivity. }
+
+  (* Non-adjacency of diagonals *)
+  split. { unfold pos_SW, pos_NE. apply (diagonal_not_adjacent 0 0 1 1); lia. }
+  split. { unfold pos_NW, pos_SE. apply (diagonal_not_adjacent 0 1 1 (-1)); lia. }
+
+  (* Manhattan distances *)
+  split. { unfold manhattan_distance, pos_SW, pos_SE. simpl. lia. }
+  split. { unfold manhattan_distance, pos_SW, pos_NW. simpl. lia. }
+  split. { unfold manhattan_distance, pos_NW, pos_NE. simpl. lia. }
+  split. { unfold manhattan_distance, pos_SE, pos_NE. simpl. lia. }
+  split. { unfold manhattan_distance, pos_SW, pos_NE. simpl. lia. }
+  split. { unfold manhattan_distance, pos_NW, pos_SE. simpl. lia. }
+
+  (* Tile placement verification *)
+  split.
+  { unfold square_2x2, square_step3, square_step2.
+    repeat rewrite add_tile_elsewhere; try (unfold pos_SW, pos_NE, pos_NW, pos_SE; intro H; inversion H; lia).
+    unfold square_step1, tile_at, single_tile_assembly, pos_SW.
+    destruct (Position_eq_dec (0,0)%Z (0,0)%Z); try contradiction. reflexivity. }
+  split.
+  { unfold square_2x2. rewrite add_tile_elsewhere; try (unfold pos_SE, pos_NE; intro H; inversion H; lia).
+    unfold square_step3. rewrite add_tile_elsewhere; try (unfold pos_SE, pos_NW; intro H; inversion H; lia).
+    unfold square_step2. apply add_tile_at_position. }
+  split.
+  { unfold square_2x2. rewrite add_tile_elsewhere; try (unfold pos_NW, pos_NE; intro H; inversion H; lia).
+    unfold square_step3. apply add_tile_at_position. }
+  split. { unfold square_2x2. apply add_tile_at_position. }
+
+  (* Finiteness proofs *)
+  split. { apply single_tile_assembly_is_finite. }
+  split.
+  { apply add_tile_preserves_finite.
+    - unfold square_step1, tile_at, single_tile_assembly, pos_SE, pos_SW.
+      destruct (Position_eq_dec (1,0)%Z (0,0)%Z) as [Heq|Hneq]; [inversion Heq; lia | reflexivity].
+    - apply single_tile_assembly_is_finite. }
+  split.
+  { apply add_tile_preserves_finite.
+    - unfold square_step2, tile_at, add_tile, pos_NW, pos_SE.
+      destruct (Position_eq_dec (0,1)%Z (1,0)%Z) as [H|_]; [inversion H; lia | ].
+      unfold square_step1, tile_at, single_tile_assembly, pos_SW.
+      destruct (Position_eq_dec (0,1)%Z (0,0)%Z) as [H|_]; [inversion H; lia | reflexivity].
+    - apply add_tile_preserves_finite.
+      + unfold square_step1, tile_at, single_tile_assembly, pos_SE, pos_SW.
+        destruct (Position_eq_dec (1,0)%Z (0,0)%Z) as [H|_]; [inversion H; lia | reflexivity].
+      + apply single_tile_assembly_is_finite. }
+  split.
+  { apply add_tile_preserves_finite.
+    - unfold square_step3, tile_at, add_tile, pos_NE, pos_NW.
+      destruct (Position_eq_dec (1,1)%Z (0,1)%Z) as [H|_]; [inversion H; lia | ].
+      unfold square_step2, tile_at, add_tile, pos_SE.
+      destruct (Position_eq_dec (1,1)%Z (1,0)%Z) as [H|_]; [inversion H; lia | ].
+      unfold square_step1, tile_at, single_tile_assembly, pos_SW.
+      destruct (Position_eq_dec (1,1)%Z (0,0)%Z) as [H|_]; [inversion H; lia | reflexivity].
+    - apply add_tile_preserves_finite.
+      + unfold square_step2, tile_at, add_tile, pos_NW, pos_SE.
+        destruct (Position_eq_dec (0,1)%Z (1,0)%Z) as [H|_]; [inversion H; lia | ].
+        unfold square_step1, tile_at, single_tile_assembly, pos_SW.
+        destruct (Position_eq_dec (0,1)%Z (0,0)%Z) as [H|_]; [inversion H; lia | reflexivity].
+      + apply add_tile_preserves_finite.
+        * unfold square_step1, tile_at, single_tile_assembly, pos_SE, pos_SW.
+          destruct (Position_eq_dec (1,0)%Z (0,0)%Z) as [H|_]; [inversion H; lia | reflexivity].
+        * apply single_tile_assembly_is_finite. }
+
+  (* Domain subset proofs *)
+  split.
+  { unfold domain_subset. intros p t Ht.
+    unfold square_step1, square_step2, tile_at, single_tile_assembly, add_tile in *.
+    destruct (Position_eq_dec p pos_SE) as [Heq|Hneq].
+    - subst. destruct (Position_eq_dec pos_SE pos_SW) as [H|_] in Ht; [unfold pos_SE, pos_SW in H; inversion H; lia | discriminate].
+    - destruct (Position_eq_dec p pos_SE) as [H|_]; [contradiction | exact Ht]. }
+  split.
+  { unfold domain_subset. intros p t Ht.
+    unfold square_step2, square_step3, tile_at, add_tile in *.
+    destruct (Position_eq_dec p pos_NW) as [Heq|Hneq].
+    - subst. destruct (Position_eq_dec pos_NW pos_SE) as [H|_] in Ht.
+      + unfold pos_NW, pos_SE in H. inversion H; lia.
+      + unfold square_step1, tile_at, single_tile_assembly in Ht.
+        destruct (Position_eq_dec pos_NW pos_SW) as [H|_] in Ht; [unfold pos_NW, pos_SW in H; inversion H; lia | discriminate].
+    - destruct (Position_eq_dec p pos_NW) as [H|_]; [contradiction | exact Ht]. }
+  split.
+  { unfold domain_subset. intros p t Ht.
+    unfold square_step3, square_2x2, tile_at, add_tile in *.
+    destruct (Position_eq_dec p pos_NE) as [Heq|Hneq].
+    - subst. destruct (Position_eq_dec pos_NE pos_NW) as [H|_] in Ht.
+      + unfold pos_NE, pos_NW in H. inversion H; lia.
+      + unfold square_step2, tile_at, add_tile in Ht.
+        destruct (Position_eq_dec pos_NE pos_SE) as [H|_] in Ht; [unfold pos_NE, pos_SE in H; inversion H; lia |].
+        unfold square_step1, tile_at, single_tile_assembly in Ht.
+        destruct (Position_eq_dec pos_NE pos_SW) as [H|_] in Ht; [unfold pos_NE, pos_SW in H; inversion H; lia | discriminate].
+    - destruct (Position_eq_dec p pos_NE) as [H|_]; [contradiction | exact Ht]. }
+
+  (* Consistency proofs *)
+  split.
+  { apply domain_subset_implies_consistent. unfold domain_subset.
+    intros p t Ht. unfold square_step1, square_step2, tile_at, single_tile_assembly, add_tile in *.
+    destruct (Position_eq_dec p pos_SE) as [Heq|Hneq].
+    - subst. destruct (Position_eq_dec pos_SE pos_SW) as [H|_] in Ht; [unfold pos_SE, pos_SW in H; inversion H; lia | discriminate].
+    - destruct (Position_eq_dec p pos_SE) as [H|_]; [contradiction | exact Ht]. }
+  split.
+  { apply domain_subset_implies_consistent. unfold domain_subset.
+    intros p t Ht. unfold square_step2, square_step3, tile_at, add_tile in *.
+    destruct (Position_eq_dec p pos_NW) as [Heq|Hneq].
+    - subst. destruct (Position_eq_dec pos_NW pos_SE) as [H|_] in Ht.
+      + unfold pos_NW, pos_SE in H. inversion H; lia.
+      + unfold square_step1, tile_at, single_tile_assembly in Ht.
+        destruct (Position_eq_dec pos_NW pos_SW) as [H|_] in Ht; [unfold pos_NW, pos_SW in H; inversion H; lia | discriminate].
+    - destruct (Position_eq_dec p pos_NW) as [H|_]; [contradiction | exact Ht]. }
+  split.
+  { apply domain_subset_implies_consistent. unfold domain_subset.
+    intros p t Ht. unfold square_step3, square_2x2, tile_at, add_tile in *.
+    destruct (Position_eq_dec p pos_NE) as [Heq|Hneq].
+    - subst. destruct (Position_eq_dec pos_NE pos_NW) as [H|_] in Ht.
+      + unfold pos_NE, pos_NW in H. inversion H; lia.
+      + unfold square_step2, tile_at, add_tile in Ht.
+        destruct (Position_eq_dec pos_NE pos_SE) as [H|_] in Ht; [unfold pos_NE, pos_SE in H; inversion H; lia |].
+        unfold square_step1, tile_at, single_tile_assembly in Ht.
+        destruct (Position_eq_dec pos_NE pos_SW) as [H|_] in Ht; [unfold pos_NE, pos_SW in H; inversion H; lia | discriminate].
+    - destruct (Position_eq_dec p pos_NE) as [H|_]; [contradiction | exact Ht]. }
+
+  (* Assembly size *)
+  split.
+  { unfold assembly_size. simpl.
+    (* Show tile_at square_2x2 for each position *)
+    assert (H_SW: tile_at square_2x2 pos_SW = Some square_tile_SW).
+    { unfold square_2x2, square_step3, square_step2.
+      repeat rewrite add_tile_elsewhere; try (unfold pos_SW, pos_NE, pos_NW, pos_SE; intro H; inversion H; lia).
+      unfold square_step1, tile_at, single_tile_assembly, pos_SW.
+      destruct (Position_eq_dec (0,0)%Z (0,0)%Z); try contradiction. reflexivity. }
+    assert (H_SE: tile_at square_2x2 pos_SE = Some square_tile_SE).
+    { unfold square_2x2. rewrite add_tile_elsewhere; try (unfold pos_SE, pos_NE; intro H; inversion H; lia).
+      unfold square_step3. rewrite add_tile_elsewhere; try (unfold pos_SE, pos_NW; intro H; inversion H; lia).
+      unfold square_step2. apply add_tile_at_position. }
+    assert (H_NW: tile_at square_2x2 pos_NW = Some square_tile_NW).
+    { unfold square_2x2. rewrite add_tile_elsewhere; try (unfold pos_NW, pos_NE; intro H; inversion H; lia).
+      unfold square_step3. apply add_tile_at_position. }
+    assert (H_NE: tile_at square_2x2 pos_NE = Some square_tile_NE).
+    { unfold square_2x2. apply add_tile_at_position. }
+    (* Rewrite filter using these facts *)
+    rewrite H_SW, H_SE, H_NW, H_NE.
+    simpl. reflexivity. }
+
+  exact I.
+Qed.
+
 (** * Section 1.2: Assembly Dynamics *)
 
 (** ** 1.2.1 Binding & Attachment *)
@@ -2190,6 +2587,92 @@ Lemma can_grow_requires_binding : forall S α p,
 Proof.
   intros S α p [t [Hin [_ Hbind]]].
   exists t. split; assumption.
+Qed.
+
+(** ** Growth Frontier *)
+
+(** The frontier of an assembly: empty positions adjacent to occupied positions *)
+Definition frontier (α : Assembly) (p : Position) : Prop :=
+  tile_at α p = None /\
+  exists q, support α q /\ adjacent q p.
+
+Lemma frontier_empty : forall p,
+  ~frontier empty_assembly p.
+Proof.
+  intros p [_ [q [Hsupp _]]].
+  apply (empty_assembly_empty_support q). exact Hsupp.
+Qed.
+
+Lemma north_is_adjacent : forall p,
+  adjacent (north p) p.
+Proof.
+  intro p. unfold adjacent, neighbors. simpl. right. right. left.
+  apply north_south_inverse.
+Qed.
+
+Lemma east_is_adjacent : forall p,
+  adjacent (east p) p.
+Proof.
+  intro p. unfold adjacent, neighbors. simpl. right. right. right. left.
+  apply east_west_inverse.
+Qed.
+
+Lemma south_is_adjacent : forall p,
+  adjacent (south p) p.
+Proof.
+  intro p. unfold adjacent, neighbors. simpl. left.
+  apply south_north_inverse.
+Qed.
+
+Lemma west_is_adjacent : forall p,
+  adjacent (west p) p.
+Proof.
+  intro p. unfold adjacent, neighbors. simpl. right. left.
+  apply west_east_inverse.
+Qed.
+
+Lemma binding_all_empty_contradiction : forall S t α p,
+  tile_at α (north p) = None ->
+  tile_at α (east p) = None ->
+  tile_at α (south p) = None ->
+  tile_at α (west p) = None ->
+  binding_strength (tas_glue_strength S) t α p >= tas_temp S ->
+  tas_temp S = 0.
+Proof.
+  intros S t α p Hn He Hs Hw Hbind.
+  unfold binding_strength, neighbor_binding in Hbind.
+  rewrite Hn, He, Hs, Hw in Hbind. simpl in Hbind. lia.
+Qed.
+
+Theorem can_grow_implies_frontier_or_temp_zero : forall S α p,
+  can_grow S α p ->
+  frontier α p \/ tas_temp S = 0.
+Proof.
+  intros S α p [t [Hin [Hempty Hbind]]].
+  destruct (tile_at α (north p)) as [t_n |] eqn:Hn.
+  - left. unfold frontier. split. exact Hempty.
+    exists (north p). split.
+    + unfold support. exists t_n. exact Hn.
+    + apply north_is_adjacent.
+  - destruct (tile_at α (east p)) as [t_e |] eqn:He.
+    + left. unfold frontier. split. exact Hempty.
+      exists (east p). split.
+      * unfold support. exists t_e. exact He.
+      * apply east_is_adjacent.
+    + destruct (tile_at α (south p)) as [t_s |] eqn:Hs.
+      * left. unfold frontier. split. exact Hempty.
+        exists (south p). split.
+        ** unfold support. exists t_s. exact Hs.
+        ** apply south_is_adjacent.
+      * destruct (tile_at α (west p)) as [t_w |] eqn:Hw.
+        ** left. unfold frontier. split. exact Hempty.
+           exists (west p). split.
+           *** unfold support. exists t_w. exact Hw.
+           *** apply west_is_adjacent.
+        ** right.
+           unfold binding_strength, neighbor_binding in Hbind.
+           rewrite Hn, He, Hs, Hw in Hbind.
+           simpl in Hbind. lia.
 Qed.
 
 (** Attachment preserves tileset membership *)
@@ -2333,6 +2816,16 @@ Proof.
   intros dir Hdir.
   unfold assembly_equiv in Hequiv.
   apply Hequiv.
+Qed.
+
+(** binding_strength respects assembly equivalence *)
+Add Parametric Morphism strength_fn t p : (fun α => binding_strength strength_fn t α p)
+  with signature assembly_equiv ==> eq
+  as binding_strength_morphism.
+Proof.
+  intros α β Heq.
+  apply binding_strength_respects_equiv.
+  exact Heq.
 Qed.
 
 (** Decidability of can_attach *)
@@ -2965,6 +3458,45 @@ Lemma has_attachable_tile_means_non_terminal : forall S α,
 Proof.
   intros S α [p [t Hattach]] Hterm.
   apply (Hterm p t). exact Hattach.
+Qed.
+
+(** Existence and non-existence conditions for terminal assemblies *)
+
+(** If all tiles have binding strength below temperature, seed is terminal *)
+Theorem seed_terminal_when_insufficient_binding : forall S,
+  (forall t p, tile_in_set t (tas_tiles S) ->
+               binding_strength (tas_glue_strength S) t (tas_seed S) p < tas_temp S) ->
+  terminal_assembly S (tas_seed S).
+Proof.
+  intros S Hinsuff p t Hattach.
+  destruct Hattach as [Hin [Hempty Hbind]].
+  specialize (Hinsuff t p Hin).
+  lia.
+Qed.
+
+(** High temperature guarantees seed is terminal when max binding strength is bounded *)
+Theorem high_temp_implies_seed_terminal : forall S max_strength,
+  (forall g, tas_glue_strength S g <= max_strength) ->
+  tas_temp S > 4 * max_strength ->
+  terminal_assembly S (tas_seed S).
+Proof.
+  intros S max_strength Hmax Htemp.
+  apply seed_terminal_when_insufficient_binding.
+  intros t p Hin.
+  assert (Hbound: binding_strength (tas_glue_strength S) t (tas_seed S) p <= 4 * max_strength).
+  { apply binding_strength_bounded. exact Hmax. }
+  lia.
+Qed.
+
+(** Terminal assembly characterization via attachability *)
+Theorem terminal_iff_no_attachable : forall S α,
+  terminal_assembly S α <-> ~(exists p t, can_attach_TAS S t α p).
+Proof.
+  intros S α. split; intro H.
+  - intro Hex. destruct Hex as [p [t Hattach]].
+    apply (H p t). exact Hattach.
+  - intros p t Hattach.
+    apply H. exists p, t. exact Hattach.
 Qed.
 
 (** ** 1.2.4 Assembly Sets *)
