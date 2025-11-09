@@ -89,6 +89,29 @@ Proof.
   intros d. destruct d; reflexivity.
 Qed.
 
+(** List of all four directions *)
+Definition all_directions : list Direction := [North; East; South; West].
+
+Lemma all_directions_complete : forall d, In d all_directions.
+Proof.
+  intro d. destruct d; unfold all_directions; simpl; auto.
+Qed.
+
+Lemma all_directions_length : length all_directions = 4.
+Proof.
+  unfold all_directions. simpl. reflexivity.
+Qed.
+
+Lemma all_directions_NoDup : NoDup all_directions.
+Proof.
+  unfold all_directions.
+  constructor. intro H. simpl in H. destruct H as [H | [H | [H | H]]]; inversion H.
+  constructor. intro H. simpl in H. destruct H as [H | [H | H]]; inversion H.
+  constructor. intro H. simpl in H. destruct H as [H | H]; inversion H.
+  constructor. intro H. simpl in H. destruct H.
+  constructor.
+Qed.
+
 (** Get glue from tile in a specific direction *)
 Definition get_glue (t : TileType) (d : Direction) : GlueType :=
   match d with
@@ -835,9 +858,43 @@ Definition east (p : Position) : Position :=
 Definition west (p : Position) : Position :=
   let (x, y) := p in (x - 1, y)%Z.
 
+(** Parametric movement function: move in any direction *)
+Definition move (p : Position) (d : Direction) : Position :=
+  match d with
+  | North => north p
+  | East => east p
+  | South => south p
+  | West => west p
+  end.
+
+(** move agrees with individual direction functions *)
+Lemma move_north : forall p, move p North = north p.
+Proof. intro p. unfold move. reflexivity. Qed.
+
+Lemma move_east : forall p, move p East = east p.
+Proof. intro p. unfold move. reflexivity. Qed.
+
+Lemma move_south : forall p, move p South = south p.
+Proof. intro p. unfold move. reflexivity. Qed.
+
+Lemma move_west : forall p, move p West = west p.
+Proof. intro p. unfold move. reflexivity. Qed.
+
 (** List of all four neighbors *)
 Definition neighbors (p : Position) : list Position :=
   [north p; east p; south p; west p].
+
+(** Parametric version using move *)
+Definition neighbors' (p : Position) : list Position :=
+  map (move p) all_directions.
+
+(** neighbors' is equivalent to neighbors *)
+Lemma neighbors_equiv : forall p,
+  neighbors' p = neighbors p.
+Proof.
+  intro p. unfold neighbors', neighbors, all_directions.
+  simpl. unfold move. reflexivity.
+Qed.
 
 (** Adjacency relation *)
 Definition adjacent (p1 p2 : Position) : Prop :=
@@ -927,6 +984,28 @@ Lemma west_east_inverse : forall p,
   east (west p) = p.
 Proof.
   intros [x y]. unfold east, west. f_equal. lia.
+Qed.
+
+(** Parametric lemmas using move *)
+
+(** move is injective in position for fixed direction *)
+Lemma move_injective : forall d p1 p2,
+  move p1 d = move p2 d -> p1 = p2.
+Proof.
+  intros d p1 p2 Hmove.
+  destruct d; unfold move in Hmove;
+  [apply north_injective | apply east_injective |
+   apply south_injective | apply west_injective]; exact Hmove.
+Qed.
+
+(** move and opposite_direction are inverses *)
+Lemma move_opposite_inverse : forall p d,
+  move (move p d) (opposite_direction d) = p.
+Proof.
+  intros p d.
+  destruct d; unfold move, opposite_direction;
+  [apply north_south_inverse | apply east_west_inverse |
+   apply south_north_inverse | apply west_east_inverse].
 Qed.
 
 (** Adjacency is symmetric - helper lemmas *)
@@ -2511,6 +2590,91 @@ Definition neighbor_binding (strength_fn : GlueType -> nat)
       else 0
   end.
 
+(** Parametric directional binding: binding strength in one specific direction
+    Note: This definition matches the existing neighbor_binding convention *)
+Definition directional_binding (strength_fn : GlueType -> nat)
+                               (t : TileType) (α : Assembly) (p : Position) (d : Direction) : nat :=
+  match tile_at α (move p d) with
+  | None => 0
+  | Some t_neighbor =>
+      match d with
+      | North => glue_strength strength_fn (glue_N t_neighbor) (glue_S t)
+      | East => glue_strength strength_fn (glue_W t_neighbor) (glue_E t)
+      | South => glue_strength strength_fn (glue_S t_neighbor) (glue_N t)
+      | West => glue_strength strength_fn (glue_E t_neighbor) (glue_W t)
+      end
+  end.
+
+(** directional_binding agrees with neighbor_binding *)
+Lemma directional_binding_north : forall strength_fn t α p,
+  directional_binding strength_fn t α p North =
+  neighbor_binding strength_fn t α p (north p).
+Proof.
+  intros strength_fn t α p.
+  unfold directional_binding, neighbor_binding, move, get_glue, opposite_direction.
+  destruct (tile_at α (north p)) as [tn |]; auto.
+  destruct (Position_eq_dec (north p) (north p)); try contradiction.
+  reflexivity.
+Qed.
+
+Lemma directional_binding_east : forall strength_fn t α p,
+  directional_binding strength_fn t α p East =
+  neighbor_binding strength_fn t α p (east p).
+Proof.
+  intros strength_fn t α p.
+  unfold directional_binding, neighbor_binding, move.
+  destruct (tile_at α (east p)) as [te |]; auto.
+  destruct (Position_eq_dec (east p) (north p)) as [Heq | _].
+  - destruct p as [x y]. unfold north, east in Heq. inversion Heq. lia.
+  - destruct (Position_eq_dec (east p) (east p)); try contradiction.
+    reflexivity.
+Qed.
+
+Lemma directional_binding_south : forall strength_fn t α p,
+  directional_binding strength_fn t α p South =
+  neighbor_binding strength_fn t α p (south p).
+Proof.
+  intros strength_fn t α p.
+  unfold directional_binding, neighbor_binding, move, get_glue, opposite_direction.
+  destruct (tile_at α (south p)) as [ts |]; auto.
+  destruct (Position_eq_dec (south p) (north p)) as [Heq | _].
+  - destruct p as [x y]. unfold north, south in Heq. inversion Heq. lia.
+  - destruct (Position_eq_dec (south p) (east p)) as [Heq | _].
+    + destruct p as [x y]. unfold south, east in Heq. inversion Heq. lia.
+    + destruct (Position_eq_dec (south p) (south p)); try contradiction.
+      reflexivity.
+Qed.
+
+Lemma directional_binding_west : forall strength_fn t α p,
+  directional_binding strength_fn t α p West =
+  neighbor_binding strength_fn t α p (west p).
+Proof.
+  intros strength_fn t α p.
+  unfold directional_binding, neighbor_binding, move, get_glue, opposite_direction.
+  destruct (tile_at α (west p)) as [tw |]; auto.
+  destruct (Position_eq_dec (west p) (north p)) as [Heq | _].
+  - destruct p as [x y]. unfold west, north in Heq. inversion Heq. lia.
+  - destruct (Position_eq_dec (west p) (east p)) as [Heq | _].
+    + destruct p as [x y]. unfold west, east in Heq. inversion Heq. lia.
+    + destruct (Position_eq_dec (west p) (south p)) as [Heq | _].
+      * destruct p as [x y]. unfold west, south in Heq. inversion Heq. lia.
+      * destruct (Position_eq_dec (west p) (west p)); try contradiction.
+        reflexivity.
+Qed.
+
+(** General equivalence theorem *)
+Theorem directional_binding_equiv : forall strength_fn t α p d,
+  directional_binding strength_fn t α p d =
+  neighbor_binding strength_fn t α p (move p d).
+Proof.
+  intros strength_fn t α p d.
+  destruct d.
+  - apply directional_binding_north.
+  - apply directional_binding_east.
+  - apply directional_binding_south.
+  - apply directional_binding_west.
+Qed.
+
 (** Total binding strength of a tile at position p: sum over all 4 neighbors *)
 Definition binding_strength (strength_fn : GlueType -> nat)
                             (t : TileType) (α : Assembly) (p : Position) : nat :=
@@ -2518,6 +2682,25 @@ Definition binding_strength (strength_fn : GlueType -> nat)
   neighbor_binding strength_fn t α p (east p) +
   neighbor_binding strength_fn t α p (south p) +
   neighbor_binding strength_fn t α p (west p).
+
+(** Parametric version using fold over all_directions *)
+Definition binding_strength' (strength_fn : GlueType -> nat)
+                             (t : TileType) (α : Assembly) (p : Position) : nat :=
+  fold_right Nat.add 0 (map (directional_binding strength_fn t α p) all_directions).
+
+(** binding_strength' is equivalent to binding_strength *)
+Theorem binding_strength_equiv : forall strength_fn t α p,
+  binding_strength' strength_fn t α p = binding_strength strength_fn t α p.
+Proof.
+  intros strength_fn t α p.
+  unfold binding_strength', binding_strength, all_directions.
+  simpl.
+  rewrite directional_binding_north.
+  rewrite directional_binding_east.
+  rewrite directional_binding_south.
+  rewrite directional_binding_west.
+  lia.
+Qed.
 
 (** A tile can attach at position p if the position is empty and binding strength ≥ τ *)
 Definition can_attach (strength_fn : GlueType -> nat) (t : TileType)
