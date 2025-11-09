@@ -20,6 +20,7 @@ Require Import Coq.Arith.Arith.
 Require Import Coq.Arith.Compare_dec.
 Require Import Coq.micromega.Lia.
 Require Import Coq.Logic.Eqdep_dec.
+Require Import Coq.Logic.FunctionalExtensionality.
 Require Import Coq.Classes.Morphisms.
 Require Import Coq.Setoids.Setoid.
 
@@ -3863,4 +3864,512 @@ Example test_terminal_subset :
   forall S α, A[S] α -> Λ[S] α.
 Proof.
   intros S α. apply terminal_set_subset_producible.
+Qed.
+
+(** * Section 1.3: Determinism and Uniqueness *)
+
+(** ** 1.3.1 Local Determinism *)
+
+(** An attachment conflict occurs when two different tiles can both attach at the same position *)
+Definition attachment_conflict (S : TAS) (α : Assembly) (p : Position) (t1 t2 : TileType) : Prop :=
+  t1 <> t2 /\
+  can_attach_TAS S t1 α p /\
+  can_attach_TAS S t2 α p.
+
+(** An assembly has a conflict if there exists at least one position with a conflict *)
+Definition has_conflict (S : TAS) (α : Assembly) : Prop :=
+  exists p t1 t2, attachment_conflict S α p t1 t2.
+
+(** Basic properties of attachment conflicts *)
+
+Lemma attachment_conflict_symmetric : forall S α p t1 t2,
+  attachment_conflict S α p t1 t2 ->
+  attachment_conflict S α p t2 t1.
+Proof.
+  intros S α p t1 t2 [Hneq [Hatt1 Hatt2]].
+  unfold attachment_conflict. split; [auto | split; auto].
+Qed.
+
+Lemma conflict_implies_not_locally_deterministic : forall S α p t1 t2,
+  attachment_conflict S α p t1 t2 ->
+  ~locally_deterministic S.
+Proof.
+  intros S α p t1 t2 [Hneq [Hatt1 Hatt2]] Hdet.
+  unfold locally_deterministic in Hdet.
+  specialize (Hdet α p t1 t2 Hatt1 Hatt2).
+  contradiction.
+Qed.
+
+(** Main characterization of local determinism *)
+
+Theorem locally_deterministic_no_conflicts : forall S,
+  locally_deterministic S <-> (forall α, ~has_conflict S α).
+Proof.
+  intro S. split; intro H.
+  - (* locally_deterministic -> no conflicts *)
+    intros α [p [t1 [t2 Hconf]]].
+    apply (conflict_implies_not_locally_deterministic S α p t1 t2); assumption.
+  - (* no conflicts -> locally_deterministic *)
+    intros α p t1 t2 Hatt1 Hatt2.
+    destruct (TileType_eq_dec t1 t2) as [Heq | Hneq]; auto.
+    exfalso. apply (H α).
+    unfold has_conflict. exists p, t1, t2.
+    unfold attachment_conflict. split; [exact Hneq | split; assumption].
+Qed.
+
+(** Conflicts respect assembly equivalence *)
+
+Lemma attachment_conflict_respects_equiv : forall S α β p t1 t2,
+  α ≡ β ->
+  attachment_conflict S α p t1 t2 ->
+  attachment_conflict S β p t1 t2.
+Proof.
+  intros S α β p t1 t2 Hequiv [Hneq [Hatt1 Hatt2]].
+  unfold attachment_conflict. split; [exact Hneq | split].
+  - destruct Hatt1 as [Hin1 [Hempty1 Hbind1]].
+    unfold can_attach_TAS. split; [exact Hin1 | split].
+    + unfold assembly_equiv in Hequiv. rewrite <- Hequiv. exact Hempty1.
+    + rewrite <- (binding_strength_respects_equiv _ _ α β); assumption.
+  - destruct Hatt2 as [Hin2 [Hempty2 Hbind2]].
+    unfold can_attach_TAS. split; [exact Hin2 | split].
+    + unfold assembly_equiv in Hequiv. rewrite <- Hequiv. exact Hempty2.
+    + rewrite <- (binding_strength_respects_equiv _ _ α β); assumption.
+Qed.
+
+Lemma has_conflict_respects_equiv : forall S α β,
+  α ≡ β ->
+  has_conflict S α ->
+  has_conflict S β.
+Proof.
+  intros S α β Hequiv [p [t1 [t2 Hconf]]].
+  unfold has_conflict. exists p, t1, t2.
+  apply (attachment_conflict_respects_equiv S α β p t1 t2); assumption.
+Qed.
+
+(** Examples and counterexamples *)
+
+(** Decidability *)
+
+Lemma attachment_conflict_dec : forall S α p t1 t2,
+  {attachment_conflict S α p t1 t2} + {~attachment_conflict S α p t1 t2}.
+Proof.
+  intros S α p t1 t2.
+  destruct (TileType_eq_dec t1 t2) as [Heq | Hneq].
+  - right. intro H. destruct H as [Hneq' _]. contradiction.
+  - destruct (can_attach_TAS_dec S t1 α p) as [Hatt1 | Hnatt1].
+    + destruct (can_attach_TAS_dec S t2 α p) as [Hatt2 | Hnatt2].
+      * left. unfold attachment_conflict. split; [exact Hneq | split; assumption].
+      * right. intro H. destruct H as [_ [_ Hatt2]]. contradiction.
+    + right. intro H. destruct H as [_ [Hatt1 _]]. contradiction.
+Defined.
+
+(** Connection to producibility *)
+
+Theorem locally_det_producible_no_conflicts : forall S α,
+  locally_deterministic S ->
+  producible_in S α ->
+  ~has_conflict S α.
+Proof.
+  intros S α Hdet Hprod.
+  apply locally_deterministic_no_conflicts.
+  exact Hdet.
+Qed.
+
+(** Concrete examples *)
+
+(** Example: Locally deterministic systems exist at temperature 2 *)
+Theorem exists_deterministic_temp_2 :
+  exists S, tas_temp S = 2 /\ locally_deterministic S.
+Proof.
+  (* Simple counter system with unique glue patterns *)
+  exists (mkTAS [mkTile 1 2 0 0] standard_glue_strength empty_assembly 2).
+  split.
+  - reflexivity.
+  - unfold locally_deterministic. intros α p t1 t2 [Hin1 _] [Hin2 _].
+    unfold tile_in_set in Hin1, Hin2. simpl in Hin1, Hin2.
+    destruct Hin1 as [Heq1 | []]; destruct Hin2 as [Heq2 | []]; congruence.
+Qed.
+
+(** Example: Temperature 0 with multiple distinct tiles is non-deterministic *)
+Theorem temp_0_multiple_tiles_non_deterministic :
+  forall t1 t2,
+    t1 <> t2 ->
+    ~locally_deterministic (mkTAS [t1; t2] standard_glue_strength empty_assembly 0).
+Proof.
+  intros t1 t2 Hneq Hdet.
+  unfold locally_deterministic in Hdet.
+  assert (Hatt1: can_attach_TAS (mkTAS [t1; t2] standard_glue_strength empty_assembly 0) t1 empty_assembly (0,0)%Z).
+  { unfold can_attach_TAS. split.
+    - unfold tile_in_set. simpl. left. reflexivity.
+    - split.
+      + apply empty_assembly_has_no_tiles.
+      + simpl. rewrite binding_strength_empty_assembly. lia. }
+  assert (Hatt2: can_attach_TAS (mkTAS [t1; t2] standard_glue_strength empty_assembly 0) t2 empty_assembly (0,0)%Z).
+  { unfold can_attach_TAS. split.
+    - unfold tile_in_set. simpl. right. left. reflexivity.
+    - split.
+      + apply empty_assembly_has_no_tiles.
+      + simpl. rewrite binding_strength_empty_assembly. lia. }
+  specialize (Hdet empty_assembly (0,0)%Z t1 t2 Hatt1 Hatt2).
+  contradiction.
+Qed.
+
+(** Example: A system with a conflict is not locally deterministic *)
+Example conflict_system_not_locally_deterministic :
+  forall S α p t1 t2,
+    attachment_conflict S α p t1 t2 ->
+    ~locally_deterministic S.
+Proof.
+  intros S α p t1 t2 Hconf.
+  apply (conflict_implies_not_locally_deterministic S α p t1 t2).
+  exact Hconf.
+Qed.
+
+(** ** 1.3.2 Confluence and the Diamond Property *)
+
+(** Confluence: If an assembly grows in two different ways, the results can reconverge *)
+Definition confluent (S : TAS) : Prop :=
+  forall α β γ,
+    α →*[S] β -> α →*[S] γ ->
+    exists δ, β →*[S] δ /\ γ →*[S] δ.
+
+(** Diamond property: single-step divergence can reconverge modulo equivalence *)
+Definition diamond_property (S : TAS) : Prop :=
+  forall α β γ,
+    α →[S] β ->
+    α →[S] γ ->
+    exists δ, (β →*[S] δ \/ β ≡ δ) /\ (γ →*[S] δ \/ γ ≡ δ).
+
+(** Basic properties *)
+
+Lemma confluent_refl : forall S α,
+  confluent S ->
+  exists δ, α →*[S] δ /\ α →*[S] δ.
+Proof.
+  intros S α Hconf.
+  exists α. split; apply multi_refl.
+Qed.
+
+(** Helper: Same position with local determinism gives same tile *)
+Lemma locally_det_same_position_same_tile : forall S α p t1 t2,
+  locally_deterministic S ->
+  can_attach_TAS S t1 α p ->
+  can_attach_TAS S t2 α p ->
+  t1 = t2.
+Proof.
+  intros S α p t1 t2 Hdet Hatt1 Hatt2.
+  unfold locally_deterministic in Hdet.
+  apply (Hdet α p t1 t2); assumption.
+Qed.
+
+(** Helper: Single tile difference at same position with same tile gives equivalence *)
+Lemma single_tile_diff_same_tile_equiv : forall α β γ p t,
+  single_tile_difference α β p t ->
+  single_tile_difference α γ p t ->
+  β ≡ γ.
+Proof.
+  intros α β γ p t [Hβ [Hα1 Hother1]] [Hγ [Hα2 Hother2]].
+  unfold assembly_equiv. intro q.
+  destruct (Position_eq_dec q p) as [Heq | Hneq].
+  - subst. rewrite Hβ, Hγ. reflexivity.
+  - rewrite <- Hother1, <- Hother2; auto.
+Qed.
+
+Lemma add_tile_deterministic : forall α p t,
+  tile_at α p = None ->
+  add_tile α p t = add_tile α p t.
+Proof.
+  intros α p t Hempty.
+  reflexivity.
+Qed.
+
+
+(** Helper: Adding tile at different position preserves binding strength if not adjacent *)
+Lemma add_tile_preserves_binding_non_adjacent : forall S α p1 p2 t1 t2,
+  p1 <> p2 ->
+  ~In p1 (neighbors p2) ->
+  binding_strength (tas_glue_strength S) t2 (add_tile α p1 t1) p2 =
+  binding_strength (tas_glue_strength S) t2 α p2.
+Proof.
+  intros S α p1 p2 t1 t2 Hneq Hnadj.
+  apply binding_strength_only_neighbors.
+  intros dir Hdir.
+  rewrite add_tile_elsewhere; auto.
+  intro Hcontra. apply Hnadj. subst. exact Hdir.
+Qed.
+
+(** Helper: Can attach at p after adding tile elsewhere *)
+Lemma can_attach_after_add_elsewhere : forall S α p1 p2 t1 t2,
+  can_attach_TAS S t2 α p2 ->
+  tile_at α p1 = None ->
+  p1 <> p2 ->
+  ~In p1 (neighbors p2) ->
+  can_attach_TAS S t2 (add_tile α p1 t1) p2.
+Proof.
+  intros S α p1 p2 t1 t2 [Hin [Hempty Hbind]] Hα1 Hneq Hnadj.
+  unfold can_attach_TAS. split; [exact Hin | split].
+  - rewrite add_tile_elsewhere; auto.
+  - rewrite add_tile_preserves_binding_non_adjacent; assumption.
+Qed.
+
+(** Helper: Commuting adds at different positions gives same result *)
+Lemma add_tile_commutes : forall α p1 p2 t1 t2,
+  p1 <> p2 ->
+  add_tile (add_tile α p1 t1) p2 t2 ≡ add_tile (add_tile α p2 t2) p1 t1.
+Proof.
+  intros α p1 p2 t1 t2 Hneq.
+  unfold assembly_equiv. intro p.
+  destruct (Position_eq_dec p p1) as [Heq1 | Hne1];
+  destruct (Position_eq_dec p p2) as [Heq2 | Hne2]; subst.
+  - contradiction.
+  - rewrite add_tile_at_position.
+    rewrite add_tile_elsewhere; auto.
+    rewrite add_tile_at_position.
+    reflexivity.
+  - rewrite add_tile_at_position.
+    symmetry.
+    rewrite add_tile_elsewhere; auto.
+    rewrite add_tile_at_position.
+    reflexivity.
+  - rewrite !add_tile_elsewhere by auto.
+    reflexivity.
+Qed.
+
+(** Helper: can_attach respects assembly equivalence *)
+Lemma can_attach_TAS_respects_equiv : forall S t α β p,
+  α ≡ β ->
+  can_attach_TAS S t α p ->
+  can_attach_TAS S t β p.
+Proof.
+  intros S t α β p Hequiv [Hin [Hempty Hbind]].
+  unfold can_attach_TAS. split; [exact Hin | split].
+  - unfold assembly_equiv in Hequiv. rewrite <- Hequiv. exact Hempty.
+  - rewrite <- (binding_strength_respects_equiv _ _ α β); assumption.
+Qed.
+
+(** Helper: single_tile_difference respects equivalence in first assembly *)
+Lemma single_tile_diff_equiv_first : forall α α' β p t,
+  α ≡ α' ->
+  single_tile_difference α β p t ->
+  single_tile_difference α' β p t.
+Proof.
+  intros α α' β p t Hequiv [Hβ [Hα Hother]].
+  unfold single_tile_difference. split; [exact Hβ | split].
+  - unfold assembly_equiv in Hequiv. rewrite <- Hequiv. exact Hα.
+  - intros p' Hneq. rewrite <- Hequiv. apply Hother. exact Hneq.
+Qed.
+
+(** Main theorem: Locally deterministic systems have the diamond property *)
+Lemma can_attach_after_add_different_pos : forall S α p1 p2 t1 t2,
+  p1 <> p2 ->
+  tile_at α p1 = None ->
+  can_attach_TAS S t2 α p2 ->
+  can_attach_TAS S t2 (add_tile α p1 t1) p2.
+Proof.
+  intros S α p1 p2 t1 t2 Hneq Hempty1 [Hin [Hempty2 Hbind]].
+  unfold can_attach_TAS. split; [exact Hin | split].
+  - rewrite add_tile_elsewhere; auto.
+  - destruct (in_dec Position_eq_dec p1 (neighbors p2)) as [Hin_neigh | Hnotin_neigh].
+    + apply Nat.le_trans with (binding_strength (tas_glue_strength S) t2 α p2).
+      * exact Hbind.
+      * destruct Hin_neigh as [Hn | [He | [Hs | [Hw | Hf]]]]; try contradiction.
+        ** rewrite <- Hn. apply binding_strength_add_north_monotonic. rewrite Hn. exact Hempty1.
+        ** rewrite <- He. apply binding_strength_add_east_monotonic. rewrite He. exact Hempty1.
+        ** rewrite <- Hs. apply binding_strength_add_south_monotonic. rewrite Hs. exact Hempty1.
+        ** rewrite <- Hw. apply binding_strength_add_west_monotonic. rewrite Hw. exact Hempty1.
+    + rewrite add_tile_preserves_binding_non_adjacent; auto.
+Qed.
+
+Lemma single_tile_diff_after_add_different_pos : forall α β p1 p2 t1 t2,
+  p1 <> p2 ->
+  single_tile_difference α β p1 t1 ->
+  tile_at α p2 = None ->
+  single_tile_difference (add_tile α p2 t2) (add_tile β p2 t2) p1 t1.
+Proof.
+  intros α β p1 p2 t1 t2 Hneq [Hβ [Hα Hother]] Hempty2.
+  unfold single_tile_difference. split; [| split].
+  - rewrite add_tile_elsewhere; auto.
+  - rewrite add_tile_elsewhere; auto.
+  - intros p' Hneq'.
+    destruct (Position_eq_dec p' p2) as [Heq | Hne].
+    + subst. rewrite !add_tile_at_position. reflexivity.
+    + rewrite !add_tile_elsewhere by auto. apply Hother. auto.
+Qed.
+
+Lemma single_tile_diff_to_equiv : forall α β p t,
+  single_tile_difference α β p t ->
+  β ≡ add_tile α p t.
+Proof.
+  intros α β p t [Hβ [Hα Hother]].
+  apply single_tile_diff_same_tile_equiv with (α := α) (p := p) (t := t).
+  - unfold single_tile_difference. split; [exact Hβ | split; [exact Hα | exact Hother]].
+  - unfold single_tile_difference. split; [| split; [| intros p' Hneq; rewrite add_tile_elsewhere by auto; reflexivity]].
+    + rewrite add_tile_at_position. reflexivity.
+    + exact Hα.
+Qed.
+
+Lemma single_tile_diff_to_add_tile_at_new_pos : forall α β p1 p2 t1 t2,
+  p1 <> p2 ->
+  single_tile_difference α β p1 t1 ->
+  tile_at β p2 = None ->
+  single_tile_difference β (add_tile β p2 t2) p2 t2.
+Proof.
+  intros α β p1 p2 t1 t2 Hneq [Hβ [Hα Hother]] Hβ2.
+  unfold single_tile_difference. split; [| split].
+  - rewrite add_tile_at_position. reflexivity.
+  - exact Hβ2.
+  - intros p' Hneq'. rewrite add_tile_elsewhere by auto. reflexivity.
+Qed.
+
+(** Helper: single_tile_difference preserves empty positions elsewhere *)
+Lemma single_tile_diff_preserves_empty_elsewhere : forall α β p1 p2 t1,
+  p1 <> p2 ->
+  single_tile_difference α β p1 t1 ->
+  tile_at α p2 = None ->
+  tile_at β p2 = None.
+Proof.
+  intros α β p1 p2 t1 Hneq [Hβ [Hα Hother]] Hempty.
+  rewrite <- Hother by auto. exact Hempty.
+Qed.
+
+(** Helper: construct single_tile_difference from β to (add_tile β p t) *)
+Lemma single_tile_diff_from_assembly_to_add : forall β p t,
+  tile_at β p = None ->
+  single_tile_difference β (add_tile β p t) p t.
+Proof.
+  intros β p t Hempty.
+  unfold single_tile_difference. split; [| split].
+  - rewrite add_tile_at_position. reflexivity.
+  - exact Hempty.
+  - intros p' Hneq. rewrite add_tile_elsewhere by auto. reflexivity.
+Qed.
+
+(** Helper: if β ≡ add_tile α p1 t1 and p2 <> p1, then tile_at α p2 = None implies tile_at β p2 = None *)
+Lemma equiv_add_preserves_empty : forall α β p1 p2 t1,
+  p1 <> p2 ->
+  β ≡ add_tile α p1 t1 ->
+  tile_at α p2 = None ->
+  tile_at β p2 = None.
+Proof.
+  intros α β p1 p2 t1 Hneq Hequiv Hempty.
+  unfold assembly_equiv in Hequiv.
+  rewrite Hequiv.
+  rewrite add_tile_elsewhere by auto.
+  exact Hempty.
+Qed.
+
+(** Helper: can_attach with β ≡ add_tile α p1 t1, attach at different position *)
+Lemma can_attach_via_equiv_add : forall S α β p1 p2 t1 t2,
+  p1 <> p2 ->
+  tile_at α p1 = None ->
+  β ≡ add_tile α p1 t1 ->
+  can_attach_TAS S t2 α p2 ->
+  can_attach_TAS S t2 β p2.
+Proof.
+  intros S α β p1 p2 t1 t2 Hneq Hempty1 Hequiv Hattach.
+  apply can_attach_TAS_respects_equiv with (α := add_tile α p1 t1).
+  - symmetry. exact Hequiv.
+  - apply can_attach_after_add_different_pos; auto.
+Qed.
+
+(** Helper: single_tile_difference when β ≡ add_tile α p1 t1 and adding at p2 <> p1 *)
+Lemma single_tile_diff_via_equiv_add : forall α β p1 p2 t1 t2,
+  p1 <> p2 ->
+  β ≡ add_tile α p1 t1 ->
+  tile_at β p2 = None ->
+  single_tile_difference β (add_tile (add_tile α p1 t1) p2 t2) p2 t2.
+Proof.
+  intros α β p1 p2 t1 t2 Hneq Hequiv Hempty.
+  unfold single_tile_difference. split; [| split].
+  - rewrite add_tile_at_position. reflexivity.
+  - exact Hempty.
+  - intros p' Hneq'.
+    destruct (Position_eq_dec p' p1) as [Heq1 | Hne1].
+    + subst. rewrite add_tile_elsewhere by auto.
+      unfold assembly_equiv in Hequiv.
+      rewrite Hequiv. rewrite add_tile_at_position. reflexivity.
+    + rewrite !add_tile_elsewhere by auto.
+      unfold assembly_equiv in Hequiv.
+      rewrite Hequiv. rewrite add_tile_elsewhere by auto. reflexivity.
+Qed.
+
+(** Helper: commuted version for second branch *)
+Lemma single_tile_diff_via_equiv_add_commute : forall α β p1 p2 t1 t2,
+  p1 <> p2 ->
+  β ≡ add_tile α p1 t1 ->
+  tile_at β p2 = None ->
+  single_tile_difference β (add_tile (add_tile α p2 t2) p1 t1) p2 t2.
+Proof.
+  intros α β p1 p2 t1 t2 Hneq Hequiv Hempty.
+  unfold single_tile_difference. split; [| split].
+  - rewrite add_tile_elsewhere by auto.
+    rewrite add_tile_at_position. reflexivity.
+  - exact Hempty.
+  - intros p' Hneq'.
+    destruct (Position_eq_dec p' p1) as [Heq1 | Hne1].
+    + subst. rewrite add_tile_at_position.
+      unfold assembly_equiv in Hequiv.
+      rewrite Hequiv. rewrite add_tile_at_position. reflexivity.
+    + rewrite !add_tile_elsewhere by auto.
+      unfold assembly_equiv in Hequiv.
+      rewrite Hequiv. rewrite add_tile_elsewhere by auto. reflexivity.
+Qed.
+
+Theorem locally_deterministic_diamond : forall S,
+  locally_deterministic S ->
+  diamond_property S.
+Proof.
+  intros S Hdet α β γ Hstep_β Hstep_γ.
+  inversion Hstep_β as [α' β' p_β t_β Hattach_β Hdiff_β]. subst.
+  inversion Hstep_γ as [α'' γ' p_γ t_γ Hattach_γ Hdiff_γ]. subst.
+  destruct (Position_eq_dec p_β p_γ) as [Heq_pos | Hneq_pos].
+  - subst p_γ.
+    assert (Heq_tile: t_β = t_γ).
+    { apply (locally_det_same_position_same_tile S α p_β); assumption. }
+    subst t_γ.
+    exists β.
+    split.
+    + left. apply multi_refl.
+    + right. symmetry. apply (single_tile_diff_same_tile_equiv α β γ p_β t_β); assumption.
+  - destruct Hdiff_β as [Hβ_β [Hα_β Hother_β]].
+    destruct Hdiff_γ as [Hγ_γ [Hα_γ Hother_γ]].
+    assert (Hβ_empty: tile_at β p_γ = None).
+    { apply equiv_add_preserves_empty with (α := α) (p1 := p_β) (t1 := t_β); auto.
+      apply single_tile_diff_to_equiv. unfold single_tile_difference. split; [exact Hβ_β | split; auto]. }
+    assert (Hγ_empty: tile_at γ p_β = None).
+    { apply equiv_add_preserves_empty with (α := α) (p1 := p_γ) (t1 := t_γ); auto.
+      apply single_tile_diff_to_equiv. unfold single_tile_difference. split; [exact Hγ_γ | split; auto]. }
+    exists (add_tile (add_tile α p_β t_β) p_γ t_γ).
+    split.
+    + left. apply multi_step_single.
+      apply step_add with (p := p_γ) (t := t_γ).
+      * apply can_attach_via_equiv_add with (α := α) (p1 := p_β) (t1 := t_β); auto.
+        apply single_tile_diff_to_equiv. unfold single_tile_difference. split; [exact Hβ_β | split; auto].
+      * apply single_tile_diff_via_equiv_add with (α := α) (p1 := p_β) (t1 := t_β); auto.
+        apply single_tile_diff_to_equiv. unfold single_tile_difference. split; [exact Hβ_β | split; auto].
+    + left. apply multi_step_single.
+      apply step_add with (p := p_β) (t := t_β).
+      * apply can_attach_via_equiv_add with (α := α) (p1 := p_γ) (t1 := t_γ); auto.
+        apply single_tile_diff_to_equiv. unfold single_tile_difference. split; [exact Hγ_γ | split; auto].
+      * apply single_tile_diff_via_equiv_add_commute with (α := α) (p1 := p_γ) (t1 := t_γ); auto.
+        apply single_tile_diff_to_equiv. unfold single_tile_difference. split; [exact Hγ_γ | split; auto].
+Qed.
+
+Theorem diamond_implies_confluent : forall S,
+  diamond_property S ->
+  confluent S.
+Proof.
+  intros S Hdiamond.
+  unfold confluent.
+  intros α β γ Hβ Hγ.
+Admitted.
+
+Theorem locally_deterministic_confluent : forall S,
+  locally_deterministic S ->
+  confluent S.
+Proof.
+  intros S Hdet.
+  apply diamond_implies_confluent.
+  apply locally_deterministic_diamond.
+  exact Hdet.
 Qed.
