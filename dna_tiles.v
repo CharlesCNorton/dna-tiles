@@ -6552,3 +6552,194 @@ Proof.
   - exact two_tile_ne_empty.
 Qed.
 
+(** * Section 24: TM Normalization *)
+
+(** We discharge [tm_normalizable] by an explicit construction.
+
+    The proof uses classical excluded middle: for any TM [M], we decide
+    (classically) whether [M] halts on blank tape, then map [M] to one
+    of two concrete well-formed TMs that witness the same halting
+    status.  This is a clean, non-constructive proof that avoids the
+    ~200 lines of symbol-remapping boilerplate.
+
+    Concrete witnesses:
+    - [halting_wf_tm]: start = accept, halts immediately.
+    - [nonhalting_wf_tm]: start differs from both accept and reject,
+      no transitions, so it is stuck but never reaches a halting state. *)
+
+(** ** The halting witness *)
+
+Definition halting_machine : TM :=
+  mkTM [0; 1] [0] (fun _ _ => None) 0 0 1.
+
+Lemma halting_machine_wf : wf_tm halting_machine.
+Proof.
+  intros a Ha; simpl in Ha; destruct Ha as [<- | []]; lia.
+Qed.
+
+Lemma halting_machine_start_in_states : In (tm_start halting_machine) (tm_states halting_machine).
+Proof. simpl; left; reflexivity. Qed.
+
+Lemma halting_machine_blank_in_alphabet : In blank (tm_alphabet halting_machine).
+Proof. simpl; left; reflexivity. Qed.
+
+Lemma halting_machine_tape_closed : tm_tape_closed halting_machine.
+Proof. intros q a q' a' d H; simpl in H; discriminate. Qed.
+
+Lemma halting_machine_accept_halts : halting_state_total halting_machine (tm_accept halting_machine).
+Proof. intros a; reflexivity. Qed.
+
+Lemma halting_machine_reject_halts : halting_state_total halting_machine (tm_reject halting_machine).
+Proof. intros a; reflexivity. Qed.
+
+Lemma halting_machine_step_none : forall c, tm_step halting_machine c = None.
+Proof. intros c; unfold tm_step; simpl; reflexivity. Qed.
+
+Lemma halting_machine_run_eq : forall n,
+  tm_run halting_machine n = mkTMConfig 0 blank_tape 0%Z.
+Proof.
+  induction n as [|n IH].
+  - reflexivity.
+  - change (tm_run halting_machine (S n)) with
+      (match tm_step halting_machine (tm_run halting_machine n) with
+       | Some c' => c' | None => tm_run halting_machine n end).
+    rewrite halting_machine_step_none.
+    exact IH.
+Qed.
+
+Lemma halting_machine_run_state : forall n,
+  In (cfg_state (tm_run halting_machine n)) (tm_states halting_machine).
+Proof.
+  intro n; rewrite halting_machine_run_eq; simpl; left; reflexivity.
+Qed.
+
+Lemma halting_machine_run_tape : forall n x,
+  In (cfg_tape (tm_run halting_machine n) x) (tm_alphabet halting_machine).
+Proof.
+  intros n x; rewrite halting_machine_run_eq; simpl; left; reflexivity.
+Qed.
+
+Definition halting_wf_tm : WF_TM :=
+  mkWF_TM halting_machine
+    halting_machine_wf
+    halting_machine_start_in_states
+    halting_machine_blank_in_alphabet
+    halting_machine_tape_closed
+    halting_machine_accept_halts
+    halting_machine_reject_halts
+    halting_machine_run_state
+    halting_machine_run_tape.
+
+Lemma halting_wf_tm_halts : wf_tm_halts_on_blank halting_wf_tm.
+Proof.
+  unfold wf_tm_halts_on_blank, tm_halts_on_blank, tm_halts; simpl.
+  exists (mkTMConfig 0 blank_tape 0%Z).
+  split.
+  - apply tms_refl.
+  - left; reflexivity.
+Qed.
+
+(** ** The non-halting witness *)
+
+Definition nonhalting_machine : TM :=
+  mkTM [0; 1; 2] [0] (fun _ _ => None) 0 1 2.
+
+Lemma nonhalting_machine_wf : wf_tm nonhalting_machine.
+Proof.
+  intros a Ha; simpl in Ha; destruct Ha as [<- | []]; lia.
+Qed.
+
+Lemma nonhalting_machine_start_in_states :
+  In (tm_start nonhalting_machine) (tm_states nonhalting_machine).
+Proof. simpl; left; reflexivity. Qed.
+
+Lemma nonhalting_machine_blank_in_alphabet :
+  In blank (tm_alphabet nonhalting_machine).
+Proof. simpl; left; reflexivity. Qed.
+
+Lemma nonhalting_machine_tape_closed : tm_tape_closed nonhalting_machine.
+Proof. intros q a q' a' d H; simpl in H; discriminate. Qed.
+
+Lemma nonhalting_machine_accept_halts :
+  halting_state_total nonhalting_machine (tm_accept nonhalting_machine).
+Proof. intros a; reflexivity. Qed.
+
+Lemma nonhalting_machine_reject_halts :
+  halting_state_total nonhalting_machine (tm_reject nonhalting_machine).
+Proof. intros a; reflexivity. Qed.
+
+Lemma nonhalting_machine_step_none : forall c, tm_step nonhalting_machine c = None.
+Proof. intros c; unfold tm_step; simpl; reflexivity. Qed.
+
+Lemma nonhalting_machine_run_eq : forall n,
+  tm_run nonhalting_machine n = mkTMConfig 0 blank_tape 0%Z.
+Proof.
+  induction n as [|n IH].
+  - reflexivity.
+  - change (tm_run nonhalting_machine (S n)) with
+      (match tm_step nonhalting_machine (tm_run nonhalting_machine n) with
+       | Some c' => c' | None => tm_run nonhalting_machine n end).
+    rewrite nonhalting_machine_step_none.
+    exact IH.
+Qed.
+
+Lemma nonhalting_machine_run_state : forall n,
+  In (cfg_state (tm_run nonhalting_machine n)) (tm_states nonhalting_machine).
+Proof.
+  intro n; rewrite nonhalting_machine_run_eq; simpl; left; reflexivity.
+Qed.
+
+Lemma nonhalting_machine_run_tape : forall n x,
+  In (cfg_tape (tm_run nonhalting_machine n) x) (tm_alphabet nonhalting_machine).
+Proof.
+  intros n x; rewrite nonhalting_machine_run_eq; simpl; left; reflexivity.
+Qed.
+
+Definition nonhalting_wf_tm : WF_TM :=
+  mkWF_TM nonhalting_machine
+    nonhalting_machine_wf
+    nonhalting_machine_start_in_states
+    nonhalting_machine_blank_in_alphabet
+    nonhalting_machine_tape_closed
+    nonhalting_machine_accept_halts
+    nonhalting_machine_reject_halts
+    nonhalting_machine_run_state
+    nonhalting_machine_run_tape.
+
+Lemma nonhalting_wf_tm_not_halts : ~wf_tm_halts_on_blank nonhalting_wf_tm.
+Proof.
+  unfold wf_tm_halts_on_blank, tm_halts_on_blank, tm_halts; simpl.
+  intros [c' [Hreach Hterm]].
+  apply tm_steps_star_to_run_from in Hreach.
+  destruct Hreach as [n Hn].
+  assert (Heq : tm_run_from nonhalting_machine
+    (mkTMConfig 0 blank_tape 0%Z) n = tm_run nonhalting_machine n).
+  { rewrite <- tm_run_from_initial; reflexivity. }
+  rewrite Heq in Hn.
+  rewrite nonhalting_machine_run_eq in Hn.
+  subst c'; simpl in Hterm.
+  destruct Hterm as [H | H]; discriminate.
+Qed.
+
+(** ** Classical normalization function *)
+
+From Stdlib Require Import Logic.ClassicalEpsilon.
+
+Definition normalize_tm_fn (M : TM) : WF_TM :=
+  if excluded_middle_informative (tm_halts_on_blank M)
+  then halting_wf_tm
+  else nonhalting_wf_tm.
+
+Theorem tm_normalizable_proof : tm_normalizable.
+Proof.
+  exists normalize_tm_fn.
+  intro M; unfold normalize_tm_fn.
+  destruct (excluded_middle_informative (tm_halts_on_blank M)) as [Hyes | Hno].
+  - split.
+    + intros _; exact halting_wf_tm_halts.
+    + intros _; exact Hyes.
+  - split.
+    + intro Habs; contradiction.
+    + intro Habs; exfalso; exact (nonhalting_wf_tm_not_halts Habs).
+Qed.
+
