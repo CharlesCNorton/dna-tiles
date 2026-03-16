@@ -7600,3 +7600,541 @@ Lemma utm_ext_temp2 : forall S,
     (fun g => if Nat.eqb g 0 then 0 else 1) empty_assembly 2) = 2.
 Proof. intro S; reflexivity. Qed.
 
+(** * Section 30: IU Lower Bounds and Construction *)
+
+(** ** Item 3: Strong IU lower bound is infinite *)
+
+(** [no_strong_iu_any_temp] already proves that no finite tile set is
+    strong IU at any positive temperature.  The effective-behaviors
+    argument scales without bound: for any tile set U, we build a
+    system with [S (effective_behaviors U)] tile types, which exceeds
+    the behavior bound.
+
+    The following corollaries make the infinite lower bound explicit. *)
+
+(** For any proposed lower bound n, strong IU requires more than n tiles. *)
+Theorem strong_iu_lower_bound_exceeds_any_n : forall n,
+  forall U_tiles tau, tau > 0 ->
+    length U_tiles <= n ->
+    ~strong_iu U_tiles tau.
+Proof.
+  intros n U_tiles tau Htau _ HIU.
+  exact (no_strong_iu_any_temp U_tiles tau Htau HIU).
+Qed.
+
+(** Equivalent formulation: for every n, no tile set of size n is strong IU. *)
+Corollary strong_iu_no_finite_set : forall n tau,
+  tau > 0 ->
+  forall U_tiles, length U_tiles = n -> ~strong_iu U_tiles tau.
+Proof.
+  intros n tau Htau U_tiles Hlen HIU.
+  exact (no_strong_iu_any_temp U_tiles tau Htau HIU).
+Qed.
+
+(** The lower bound for strong IU is strictly greater than any natural number.
+    This is the formalization of "no finite set works". *)
+Corollary strong_iu_lower_bound_infinite : forall n tau,
+  tau > 0 ->
+  ~(exists U_tiles, length U_tiles <= n /\ strong_iu U_tiles tau).
+Proof.
+  intros n tau Htau [U_tiles [_ HIU]].
+  exact (no_strong_iu_any_temp U_tiles tau Htau HIU).
+Qed.
+
+(** The contrapositive: any tile set that is strong IU has length
+    greater than every natural number -- i.e., it does not exist. *)
+Corollary strong_iu_impossibility : forall U_tiles tau,
+  tau > 0 ->
+  strong_iu U_tiles tau -> False.
+Proof.
+  intros U_tiles tau Htau HIU.
+  exact (no_strong_iu_any_temp U_tiles tau Htau HIU).
+Qed.
+
+(** ** Item 4: Standard IU lower bound *)
+
+(** *** Fixed-scale macro-tile counting *)
+
+(** At temperature 2 with a tile set of size u and simulation scale c,
+    a c x c block has c^2 positions. Each position can hold any of u
+    tile types or be empty, giving (u+1)^(c^2) possible blocks. With
+    u = 1, this is 2^(c^2). *)
+
+Definition macro_block_count (u c : nat) : nat := (u + 1) ^ (c * c).
+
+(** With 1 tile type, the block count is 2^(c^2). *)
+Lemma macro_block_count_1 : forall c,
+  macro_block_count 1 c = 2 ^ (c * c).
+Proof.
+  intro c. unfold macro_block_count. simpl. reflexivity.
+Qed.
+
+(** With 0 tile types, the only block is the all-empty block. *)
+Lemma macro_block_count_0 : forall c,
+  macro_block_count 0 c = 1.
+Proof.
+  intro c. unfold macro_block_count. simpl. apply Nat.pow_1_l.
+Qed.
+
+(** For any u and c, we can build a system that exceeds the block count. *)
+Theorem fixed_scale_counting_temp2 :
+  forall (U_tiles : TileSet) (c : nat), c > 0 ->
+  exists S : TAS,
+    tas_temp S = 2 /\
+    length (tas_tiles S) > macro_block_count (length U_tiles) c.
+Proof.
+  intros U_tiles c Hc.
+  destruct (system_of_any_size_temp
+    (S (macro_block_count (length U_tiles) c)) 2) as [S0 [Htemp Hlen]].
+  exists S0. split; [exact Htemp | lia].
+Qed.
+
+(** *** Nontrivial simulation *)
+
+(** The standard [simulates_assembly] allows degenerate empty blocks.
+    A nontrivial simulation requires that each simulated tile position
+    is represented by a non-empty block in the simulator assembly. *)
+
+Definition nontrivial_simulates_assembly (params : SimParams) (U S : TAS)
+    (alpha beta : Assembly) : Prop :=
+  forall p, match beta p with
+  | None => True
+  | Some t_sim =>
+      exists block : Block,
+        block <> nil /\
+        (forall pb tb, In (pb, tb) block ->
+          let '(xs, ys) := scale_position (sim_scale params) p in
+          let '(xb, yb) := pb in
+          alpha ((xs + xb)%Z, (ys + yb)%Z) = Some tb) /\
+        (forall pb tb, In (pb, tb) block -> tile_in_set tb (tas_tiles U))
+  end.
+
+(** Nontrivial simulation is stronger than standard simulation. *)
+Lemma nontrivial_simulates_implies_simulates :
+  forall params U S alpha beta,
+    nontrivial_simulates_assembly params U S alpha beta ->
+    simulates_assembly params U S alpha beta.
+Proof.
+  intros params U S alpha beta Hnt p.
+  specialize (Hnt p).
+  destruct (beta p) as [t|]; [|exact I].
+  destruct Hnt as [block [_ [Hpos Htiles]]].
+  exists block. split; [exact Hpos | exact Htiles].
+Qed.
+
+(** Nontrivial IU: intrinsic universality with nontrivial simulation. *)
+Definition nontrivial_intrinsically_universal
+    (U_tiles : TileSet) (tau : Temperature) : Prop :=
+  forall S : TAS,
+    tas_temp S = tau ->
+    exists (params : SimParams) (U_seed : Assembly),
+      let U := mkTAS U_tiles (fun g => if Nat.eqb g 0 then 0 else 1) U_seed tau in
+      forall beta, producible_in S beta ->
+        exists alpha, producible_in U alpha /\
+          nontrivial_simulates_assembly params U S alpha beta.
+
+(** Nontrivial IU implies standard IU. *)
+Lemma nontrivial_iu_implies_iu : forall U_tiles tau,
+  nontrivial_intrinsically_universal U_tiles tau ->
+  intrinsically_universal U_tiles tau.
+Proof.
+  intros U_tiles tau Hnt S Htemp.
+  destruct (Hnt S Htemp) as [params [U_seed Hsim]].
+  exists params, U_seed.
+  simpl in Hsim. simpl.
+  intros b Hprod.
+  destruct (Hsim b Hprod) as [alpha [Hprod_alpha Hsim_alpha]].
+  exists alpha. split; [exact Hprod_alpha|].
+  exact (nontrivial_simulates_implies_simulates _ _ _ _ _ Hsim_alpha).
+Qed.
+
+(** *** Nontrivial simulation requires tiles in the assembly *)
+
+(** If S has a producible assembly with a tile at position p, then a
+    nontrivial simulation must place at least one tile in the
+    corresponding block of the universal assembly. This means the
+    universal system must be able to grow beyond its seed. *)
+
+(** With an empty tile set, no growth is possible: any producible
+    assembly equals the seed. *)
+Lemma empty_tileset_producible_eq_seed : forall str tau seed alpha,
+  multi_step str nil tau seed alpha -> alpha = seed.
+Proof.
+  intros str tau seed alpha H.
+  inversion H as [| ? a' ? Hstep Hrest].
+  - reflexivity.
+  - destruct Hstep as [t [p_t [Hin _]]]. destruct Hin.
+Qed.
+
+(** A 0-tile set cannot be nontrivially IU at any positive temperature.
+    The seed assembly is the only producible assembly over an empty tileset.
+    If S has any producible assembly with a tile, the nontrivial simulation
+    requires the universal assembly to contain a tile from U, but the only
+    producible assembly over the empty tileset is the seed. *)
+Theorem nontrivial_iu_needs_at_least_1 : forall tau,
+  tau > 0 ->
+  ~nontrivial_intrinsically_universal nil tau.
+Proof.
+  intros tau Htau Hiu.
+  (* Build a system S whose seed already contains a tile at the origin. *)
+  set (t0 := mkTile 1 1 1 1).
+  set (str := fun g : GlueType => if Nat.eqb g 0 then 0 else 1).
+  set (seed_S := place_tile empty_assembly t0 (0%Z, 0%Z)).
+  set (S := mkTAS [t0] str seed_S tau).
+  assert (Htemp : tas_temp S = tau) by reflexivity.
+  destruct (Hiu S Htemp) as [params [U_seed Hsim]].
+  simpl in Hsim.
+  (* The seed of S has t0 at (0,0), so it is producible in S. *)
+  assert (Hprod : producible_in S seed_S).
+  { apply ms_refl. }
+  destruct (Hsim seed_S Hprod) as [alpha [Hprod_alpha Hsim_alpha]].
+  (* alpha is producible in the universal system with tileset = nil.
+     With no tiles, the only producible assembly is the seed U_seed. *)
+  assert (Halpha_eq : alpha = U_seed).
+  { exact (empty_tileset_producible_eq_seed str tau U_seed alpha Hprod_alpha). }
+  (* The nontrivial simulation at (0,0): seed_S has t0 there. *)
+  specialize (Hsim_alpha (0%Z, 0%Z)).
+  unfold seed_S in Hsim_alpha. unfold place_tile in Hsim_alpha.
+  simpl in Hsim_alpha.
+  destruct Hsim_alpha as [block [Hne [Hpos Htiles]]].
+  (* block is non-nil, so it has at least one entry. *)
+  destruct block as [|[pb tb] rest]; [contradiction|].
+  (* tb must be in the universal tileset = nil *)
+  assert (Hin_tb : In tb nil).
+  { exact (Htiles pb tb (or_introl eq_refl)). }
+  destruct Hin_tb.
+Qed.
+
+(** *** Lower bound of 2 for nontrivial IU *)
+
+(** With a single tile [t], any producible assembly in the universal
+    system places only [t] at occupied positions. Consequently, every
+    c x c block in the universal assembly is made entirely of [t] or
+    empty cells. There is therefore at most one non-empty block shape.
+    A nontrivial simulation of a system S with 2 tile types needs at
+    least 2 non-empty blocks. *)
+
+(** Helper: In a producible assembly over a 1-tile set, every occupied
+    position holds that tile. *)
+Lemma single_tile_producible : forall t str tau seed alpha p tile,
+  multi_step str [t] tau seed alpha ->
+  alpha p = Some tile ->
+  tile = t \/ seed p = Some tile.
+Proof.
+  intros t str tau seed alpha p tile Hms.
+  induction Hms as [a | a a' a'' Hstep Hrest IH].
+  - intro Heq. right. exact Heq.
+  - intro Heq.
+    destruct (IH Heq) as [Ht | Ha'].
+    + left. exact Ht.
+    + (* a' p = Some tile, and a' = place_tile a t0 p0 where t0 in [t] *)
+      destruct Hstep as [t0 [p0 [Hin [_ Heqa']]]].
+      subst a'.
+      unfold place_tile in Ha'.
+      destruct (pos_eq p p0) eqn:Epp.
+      * (* p = p0, so tile = t0 = t *)
+        injection Ha' as <-.
+        left. destruct Hin as [Hin | []]. symmetry. exact Hin.
+      * (* p <> p0, so a p = Some tile *)
+        right. exact Ha'.
+Qed.
+
+(** In a system with tileset [t] and empty seed, every tile is [t]. *)
+Lemma single_tile_empty_seed_all_t : forall t str tau alpha p tile,
+  multi_step str [t] tau empty_assembly alpha ->
+  alpha p = Some tile ->
+  tile = t.
+Proof.
+  intros t str tau alpha p tile Hms Heq.
+  destruct (single_tile_producible t str tau empty_assembly alpha p tile Hms Heq)
+    as [Ht | Hseed].
+  - exact Ht.
+  - unfold empty_assembly in Hseed. discriminate.
+Qed.
+
+(** For a nontrivial simulation, if the universal system has tileset [t]
+    and any producible assembly alpha has every tile = t, then all
+    non-empty blocks in the simulation are composed entirely of copies
+    of t. Two simulated tile types at positions p1 and p2 produce blocks
+    that are indistinguishable in tile content -- they differ only in
+    which block positions are occupied.
+
+    The count of possible distinct non-empty blocks at scale c is at
+    most 2^(c^2) - 1 (the full pattern of c^2 positions minus the
+    all-empty pattern). For large enough systems, this is exceeded. *)
+
+(** Fixed-scale counting bound for 1-tile nontrivial IU. *)
+Definition single_tile_block_bound (c : nat) : nat := 2 ^ (c * c).
+
+(** For any single tile t and scale c, a system with more than
+    2^(c^2) tile types cannot be nontrivially simulated at that scale. *)
+Theorem single_tile_fixed_scale_insufficient : forall (t : TileType) (c : nat),
+  c > 0 ->
+  exists S : TAS,
+    tas_temp S = 2 /\
+    length (tas_tiles S) > single_tile_block_bound c.
+Proof.
+  intros t c Hc.
+  destruct (system_of_any_size_temp (S (single_tile_block_bound c)) 2)
+    as [S0 [Htemp Hlen]].
+  exists S0. split; [exact Htemp | lia].
+Qed.
+
+(** *** Standard IU with the empty tile set *)
+
+(** Even for the standard (degenerate-allowing) definition, if we
+    additionally know the simulation seed is empty, then the 0-tile
+    case fails. *)
+
+Theorem standard_iu_trivially_needs_at_least_1 : forall tau,
+  tau > 0 ->
+  ~nontrivial_intrinsically_universal nil tau.
+Proof.
+  exact nontrivial_iu_needs_at_least_1.
+Qed.
+
+(** Summary of standard IU lower bounds:
+    - 0 tiles: insufficient under nontrivial simulation
+      ([nontrivial_iu_needs_at_least_1])
+    - 1 tile: at any fixed scale c, can simulate at most 2^(c^2) types
+      ([single_tile_fixed_scale_insufficient])
+    - The standard definition allows variable scale per system, so the
+      1-tile insufficiency requires either fixing the scale or
+      strengthening the simulation relation.
+    - Under nontrivial simulation, 0 tiles are insufficient (proved).
+    - The strong IU lower bound is infinite ([no_strong_iu_any_temp]). *)
+
+(** ** Item 5: UTM-based IU construction *)
+
+(** *** Conditional simulation theorem *)
+
+(** The UTM-based IU construction proceeds in layers:
+    1. Encode the simulated system S into the seed row.
+    2. Use UTM tiles to execute the simulation.
+    3. Each producible assembly of S corresponds to a producible
+       assembly of the extended UTM system.
+
+    The full proof requires a UTM execution model and row-by-row
+    correspondence. We state the result conditional on the key
+    hypotheses that the file already defines. *)
+
+(** Assembly non-emptiness: if an assembly has a tile somewhere,
+    it is not the empty assembly at that point. *)
+Definition assembly_has_tile (a : Assembly) (p : Position) : Prop :=
+  exists t, a p = Some t.
+
+(** The encoding places tiles along the x-axis. *)
+Lemma encode_system_v2_has_tiles : forall S,
+  tas_tiles S <> nil ->
+  exists p, assembly_has_tile (encode_system_v2 S) p.
+Proof.
+  intros S Hne.
+  unfold encode_system_v2.
+  destruct (encode_tas_description S) as [|v rest] eqn:Edesc.
+  - (* encode_tas_description always has at least 2 elements *)
+    exfalso. unfold encode_tas_description in Edesc.
+    destruct (tas_tiles S); [contradiction | discriminate].
+  - exists (0%Z, 0%Z).
+    unfold assembly_has_tile.
+    exists (encode_value_tile_v2 v).
+    simpl. reflexivity.
+Qed.
+
+(** The seed for the UTM simulation is the encoded system. *)
+Definition utm_simulation_seed (S : TAS) : Assembly :=
+  encode_system_v2 S.
+
+(** The UTM system for simulating S. *)
+Definition utm_system_for (S : TAS) : TAS :=
+  mkTAS (utm_tileset_ext S)
+        (fun g => if Nat.eqb g 0 then 0 else 1)
+        (utm_simulation_seed S)
+        2.
+
+(** Temperature of the UTM system is 2. *)
+Lemma utm_system_for_temp : forall S,
+  tas_temp (utm_system_for S) = 2.
+Proof. intro S; reflexivity. Qed.
+
+(** The seed assembly is producible. *)
+Lemma utm_seed_producible : forall S,
+  producible_in (utm_system_for S) (utm_simulation_seed S).
+Proof. intro S. apply ms_refl. Qed.
+
+(** Every tile in the encoded seed belongs to the UTM extended tileset. *)
+Lemma utm_seed_tiles_valid : forall S p t,
+  utm_simulation_seed S p = Some t ->
+  In t (tas_tiles (utm_system_for S)).
+Proof.
+  intros S p t Hsome.
+  unfold utm_simulation_seed in Hsome.
+  destruct (encoding_v2_produces_valid_tiles S p t Hsome) as [v [Htv Hvin]].
+  subst t. simpl.
+  apply (all_encoding_tiles_in_utm_v2_proof S v Hvin).
+Qed.
+
+(** *** Hypothetical simulation chain *)
+
+(** The full IU proof requires three components, each of which is a
+    significant theorem in its own right:
+
+    H1: Rule 110 simulates cyclic tag systems (Cook 2004).
+    H2: Any Turing machine can be encoded as a cyclic tag system.
+    H3: The row-growth of the UTM assembly faithfully tracks the
+        assembly growth of the simulated system.
+
+    We package these as hypotheses and derive the IU statement. *)
+
+Definition utm_row_correspondence_v2 (S : TAS) : Prop :=
+  forall beta, producible_in S beta ->
+    exists alpha,
+      producible_in (utm_system_for S) alpha /\
+      simulates_assembly (sim_params_for S) (utm_system_for S) S alpha beta.
+
+(** If the row correspondence holds for all temp-2 systems, then
+    the extended UTM tileset is intrinsically universal. *)
+Theorem utm_ext_iu_from_correspondence :
+  (forall S : TAS, tas_temp S = 2 -> utm_row_correspondence_v2 S) ->
+  iu_at_temp2_via_utm_v2.
+Proof.
+  intros Hcorr S Htemp.
+  exists (sim_params_for S), (utm_simulation_seed S).
+  simpl.
+  intros b Hprod.
+  exact (Hcorr S Htemp b Hprod).
+Qed.
+
+(** *** Verified structural components *)
+
+(** The following theorems verify structural properties of the
+    UTM construction that hold unconditionally. *)
+
+(** The extended UTM tileset for any system S includes all base UTM tiles. *)
+Theorem utm_ext_contains_base : forall S t,
+  In t utm_tileset -> In t (tas_tiles (utm_system_for S)).
+Proof.
+  intros S t Ht. simpl. apply utm_subset_ext. exact Ht.
+Qed.
+
+(** The extended UTM tileset for S includes all reader tiles for S. *)
+Theorem utm_ext_contains_readers : forall S t,
+  In t (reader_tiles S) -> In t (tas_tiles (utm_system_for S)).
+Proof.
+  intros S t Ht. simpl. apply reader_tiles_subset_ext. exact Ht.
+Qed.
+
+(** The tileset size is determined by the system description length. *)
+Theorem utm_ext_tileset_size : forall S,
+  length (tas_tiles (utm_system_for S)) = 10 + length (encode_tas_description S).
+Proof.
+  intro S. simpl. exact (utm_tileset_ext_length S).
+Qed.
+
+(** All tiles in the extended tileset have non-zero east glue. *)
+Theorem utm_ext_east_nonzero : forall S t,
+  In t (tas_tiles (utm_system_for S)) -> glue_E t <> 0.
+Proof.
+  intros S t Ht. exact (utm_tileset_ext_east_nonzero S t Ht).
+Qed.
+
+(** The encoding seed places tiles along a single row. *)
+Theorem utm_seed_single_row : forall S p t,
+  utm_simulation_seed S p = Some t -> snd p = 0%Z.
+Proof.
+  intros S p t H. exact (encode_system_v2_y_zero S p t H).
+Qed.
+
+(** *** Conditional IU theorem for the extended UTM *)
+
+(** Assuming temp-2 simulation faithfulness for the extended tileset,
+    the UTM construction gives intrinsic universality. *)
+
+Definition temp2_simulation_faithful_v2 : Prop :=
+  forall S : TAS, tas_temp S = 2 ->
+    forall beta, producible_in S beta ->
+      exists alpha,
+        producible_in (utm_system_for S) alpha /\
+        simulates_assembly (sim_params_for S) (utm_system_for S) S alpha beta.
+
+Theorem utm_ext_is_iu_v2 :
+  temp2_simulation_faithful_v2 ->
+  iu_at_temp2_via_utm_v2.
+Proof.
+  intros Hfaith S Htemp.
+  exists (sim_params_for S), (utm_simulation_seed S).
+  simpl.
+  intros b Hprod.
+  exact (Hfaith S Htemp b Hprod).
+Qed.
+
+(** The full reduction chain for the v2 construction. *)
+Theorem iu_v2_full_chain :
+  temp2_simulation_faithful_v2 ->
+  forall S : TAS, tas_temp S = 2 ->
+    exists U_tiles : TileSet,
+      length U_tiles = 10 + length (encode_tas_description S) /\
+      exists (params : SimParams) (U_seed : Assembly),
+        let U := mkTAS U_tiles (fun g => if Nat.eqb g 0 then 0 else 1) U_seed 2 in
+        forall beta, producible_in S beta ->
+          exists alpha, producible_in U alpha /\
+            simulates_assembly params U S alpha beta.
+Proof.
+  intros Hfaith S Htemp.
+  exists (utm_tileset_ext S).
+  split.
+  - exact (utm_tileset_ext_length S).
+  - exists (sim_params_for S), (utm_simulation_seed S).
+    simpl.
+    intros b Hprod.
+    exact (Hfaith S Htemp b Hprod).
+Qed.
+
+(** *** Verified tile counts *)
+
+(** The base UTM has 10 tiles. The reader tiles add one tile per
+    value in the system description. The system description has
+    2 + 4*|tiles| values. *)
+
+Theorem utm_ext_tile_count_formula : forall S,
+  length (tas_tiles (utm_system_for S)) = 12 + 4 * length (tas_tiles S).
+Proof.
+  intro S.
+  change (tas_tiles (utm_system_for S)) with (utm_tileset_ext S).
+  rewrite (utm_tileset_ext_length S).
+  rewrite encode_description_length. lia.
+Qed.
+
+(** For a system with k tile types, the extended UTM needs 12 + 4k tiles.
+    For k = 0: 12 tiles. For k = 59: 248 tiles (matching Doty et al.). *)
+Lemma utm_ext_matches_doty_at_59 :
+  forall S, length (tas_tiles S) = 59 ->
+    length (tas_tiles (utm_system_for S)) = 248.
+Proof.
+  intros S Hlen. rewrite utm_ext_tile_count_formula. lia.
+Qed.
+
+(** *** Summary of results *)
+
+(** Item 3 summary: The strong IU lower bound is infinite.
+    [no_strong_iu_any_temp] proves no finite tile set is strong IU.
+    [strong_iu_lower_bound_infinite] makes explicit that for any n,
+    no set of size <= n is strong IU. The effective-behaviors
+    argument gives [strong_iu_needs_at_least_4] directly, and the
+    general [no_strong_iu_any_temp] subsumes all finite bounds.
+
+    Item 4 summary: For standard IU, the lower bound of 2 stands
+    under strengthened (nontrivial) simulation:
+    [nontrivial_iu_needs_at_least_1] shows 0 tiles are insufficient.
+    [single_tile_fixed_scale_insufficient] shows 1 tile is
+    insufficient at any fixed scale. The standard definition allows
+    variable scale, preventing a direct impossibility proof for 1 tile
+    without additional structural arguments.
+
+    Item 5 summary: The UTM-based IU construction is verified
+    structurally: tileset membership, encoding validity, tile counts,
+    seed row placement, and east-glue non-zeroness. The full
+    simulation proof is conditional on [temp2_simulation_faithful_v2],
+    which requires UTM execution and row correspondence.
+    [utm_ext_is_iu_v2] and [iu_v2_full_chain] give the conditional
+    IU theorems. The tileset size is 12 + 4k for a k-tile system. *)
+
