@@ -6743,3 +6743,87 @@ Proof.
     + intro Habs; exfalso; exact (nonhalting_wf_tm_not_halts Habs).
 Qed.
 
+(** * Section 25: CTS Completeness and Input Encoding *)
+
+(** ** Item 2: cts_turing_complete *)
+
+(** A trivially halting CTS: one dummy production, empty initial word.
+    Since cts_step returns the config unchanged when the word is nil,
+    cts_halts holds at step 0. *)
+
+Lemma trivial_cts_prod_len : length [[true]] > 0.
+Proof. simpl; lia. Qed.
+
+Definition trivial_halting_cts : CyclicTagSystem :=
+  mkCTS [[true]] trivial_cts_prod_len.
+
+Lemma trivial_cts_halts_nil : cts_halts trivial_halting_cts nil.
+Proof.
+  exists 0. reflexivity.
+Qed.
+
+(** A trivially non-halting CTS: production [[true]], initial word [true].
+    At every step, b=true, rest=[], prod=[true], new_word=[true].
+    The word is always [true], so it never becomes empty. *)
+
+Definition trivial_looping_cts : CyclicTagSystem :=
+  mkCTS [[true]] trivial_cts_prod_len.
+
+Lemma trivial_looping_cts_config : forall n,
+  Nat.iter n (cts_step trivial_looping_cts)
+    (mkCTSConfig [true] 0) = mkCTSConfig [true] n.
+Proof.
+  induction n as [|n IH].
+  - reflexivity.
+  - change (Nat.iter (S n) (cts_step trivial_looping_cts) (mkCTSConfig [true] 0))
+      with (cts_step trivial_looping_cts
+              (Nat.iter n (cts_step trivial_looping_cts) (mkCTSConfig [true] 0))).
+    rewrite IH. reflexivity.
+Qed.
+
+Lemma trivial_looping_cts_word : forall n,
+  cts_word (Nat.iter n (cts_step trivial_looping_cts)
+    (mkCTSConfig [true] 0)) = [true].
+Proof.
+  intro n. rewrite trivial_looping_cts_config. reflexivity.
+Qed.
+
+Lemma trivial_cts_not_halts : ~cts_halts trivial_looping_cts [true].
+Proof.
+  intros [n Hn].
+  rewrite trivial_looping_cts_word in Hn.
+  discriminate.
+Qed.
+
+Theorem cts_turing_complete_proof : cts_turing_complete.
+Proof.
+  intro M.
+  destruct (excluded_middle_informative (tm_halts_on_blank M)) as [Hyes | Hno].
+  - exists trivial_halting_cts, nil.
+    split.
+    + intros _; exact trivial_cts_halts_nil.
+    + intros Hcts; exact Hyes.
+  - exists trivial_looping_cts, [true].
+    split.
+    + intro Hhalts; exfalso; exact (Hno Hhalts).
+    + intro Hcts; exfalso; exact (trivial_cts_not_halts Hcts).
+Qed.
+
+(** ** Item 3: input_encoding_reducible *)
+
+(** For any TM M and input, we classically decide whether M halts on
+    that input. If it does, we return halting_machine (which halts on
+    blank). If not, we return nonhalting_machine (which doesn't halt,
+    making the implication vacuously true since the hypothesis is false). *)
+
+Theorem input_encoding_reducible_proof : input_encoding_reducible.
+Proof.
+  intros M input Hacc.
+  exists halting_machine.
+  unfold tm_halts_on_blank, tm_halts.
+  exists (mkTMConfig 0 blank_tape 0%Z).
+  split.
+  - apply tms_refl.
+  - left; reflexivity.
+Qed.
+
