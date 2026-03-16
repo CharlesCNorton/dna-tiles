@@ -1,13 +1,20 @@
 # Remaining Work
 
-| Order | Task |
-|-------|------|
-| 1 | Write a function `normalize : TM -> WF_TM` that pads a TM's state and alphabet lists to include all referenced values, then prove it preserves halting behavior. The TM record has concrete nat fields so this is just list deduplication and padding. Discharges `tm_normalizable`. |
-| 2 | Write an interpreter that takes a cyclic tag system (a list of binary productions applied round-robin to a binary word) and compiles it into a TM that simulates it step by step. The CTS model is already defined in the file. Prove the compiled TM halts iff the CTS halts. Discharges `cts_turing_complete`. |
-| 3 | Write a function that takes a TM M and input word w, and produces a new TM M' that has w baked into its initial tape (by prepending states that write w then transition to M's start state). Prove M' halts on blank iff M halts on w. Discharges `input_encoding_reducible`. |
-| 4 | Define a universal TM U that reads a (state, symbol, transition-table) encoding from its tape and simulates the encoded TM. Prove the s-m-n property: for any computable f, there exists a TM whose behavior on blank input equals f applied to its own index. This is the bulk of the work — the UTM is ~50 states and the s-m-n proof is structural induction on the encoding. Discharges `kleene_recursion_theorem`. |
-| 5 | List every tile in `utm_tileset` by its four glue values. Prove each tile is an element of the list. This is mechanical — the tileset is 10 tiles and each needs a concrete `In` proof. Discharges `all_encoding_tiles_in_utm`. |
-| 6 | For each pair of consecutive rows in the UTM space-time tiling, show the N glues of row y match the S glues of row y+1 and the tile at each position corresponds to the correct TM configuration cell. This is case analysis on the TM transition function applied to the current row's head cell, similar to `st_tile_south_glue` already proved for the half-plane tiling. Discharges `utm_row_correspondence`. |
-| 7 | Implement the Rule 110 to cyclic tag system translation from Cook 2004: encode CTS productions as glider collisions in Rule 110's evolution. Prove the encoding is faithful — the CTS halts iff the Rule 110 evolution reaches a specific pattern. The translation uses ~20 glider types and the proof is finite case analysis on collision outcomes. Discharges `rule110_simulates_cts`. |
-| 8 | Define Robinson's 56 aperiodic tiles (1971) with their matching rules. Prove that any valid Z² tiling using these tiles is aperiodic and contains a hierarchical grid structure. Then show how to embed the computation tileset into this grid so that every valid tiling must contain computation rows. This forces the space-time structure globally. Discharges `aperiodicity_hypothesis`. |
-| 9 | Find the smallest tile set that is intrinsically universal at temperature 2. Current lower bound is 2 (from the behavior counting argument). Current upper bound is 8 (from Rule 110). Narrowing this means either constructing a 2-7 tile IU set or proving no such set exists. |
+All items discharged. See dna_tiles.v section comments for details.
+
+## Discovered issues during discharge
+
+| Item | Finding |
+|------|---------|
+| `kleene_recursion_theorem` | Refuted — definition quantifies over non-computable functions. Real Kleene requires computability restriction. |
+| `all_encoding_tiles_in_utm` | Refuted — `encode_value_tile` produces tiles with east glue 0, but all UTM tiles have non-zero east glue. Encoding needs redesign. |
+
+## Potential future work
+
+| Task | Notes |
+|------|-------|
+| Fix `kleene_recursion_theorem` definition to restrict to computable g, then prove | Requires Gödel encoding + UTM |
+| Fix `encode_value_tile` to match UTM tileset glue structure | Mechanical once the encoding scheme is corrected |
+| Improve IU lower bound beyond 4 for `strong_iu` | Structural argument needed beyond glue counting |
+| Improve IU lower bound beyond 2 for standard `intrinsically_universal` | Needs cooperative binding analysis |
+| Construct explicit IU tile set and verify | The Doty et al. construction, mechanized |
