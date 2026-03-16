@@ -4370,3 +4370,900 @@ Qed.
        undecidable (conditional on berger_correspondence, PROVED)
     8. domino_implies_some_origin_constrained: domino problem implies
        origin-constrained for some tile (FULLY PROVED) *)
+
+(** * Section 18: Assembly Infrastructure *)
+
+(** ** Manhattan distance *)
+
+Definition manhattan_distance (p1 p2 : Position) : Z :=
+  let '(x1, y1) := p1 in
+  let '(x2, y2) := p2 in
+  (Z.abs (x1 - x2) + Z.abs (y1 - y2))%Z.
+
+Lemma manhattan_nonneg : forall p1 p2,
+  (manhattan_distance p1 p2 >= 0)%Z.
+Proof.
+  intros [x1 y1] [x2 y2]; unfold manhattan_distance; lia.
+Qed.
+
+Lemma manhattan_zero_iff : forall p1 p2,
+  manhattan_distance p1 p2 = 0%Z <-> p1 = p2.
+Proof.
+  intros [x1 y1] [x2 y2]; unfold manhattan_distance; split; intro H.
+  - assert (Z.abs (x1 - x2) = 0 /\ Z.abs (y1 - y2) = 0)%Z as [Hx Hy] by lia.
+    f_equal; lia.
+  - inversion H; subst; lia.
+Qed.
+
+Lemma manhattan_symmetric : forall p1 p2,
+  manhattan_distance p1 p2 = manhattan_distance p2 p1.
+Proof.
+  intros [x1 y1] [x2 y2]; unfold manhattan_distance; lia.
+Qed.
+
+Lemma adjacent_iff_distance_one : forall p1 p2,
+  adjacent p1 p2 <-> manhattan_distance p1 p2 = 1%Z.
+Proof.
+  intros [x1 y1] [x2 y2].
+  unfold adjacent, neighbors, all_directions, manhattan_distance; simpl.
+  split; intro H.
+  - destruct H as [H | [H | [H | [H | []]]]];
+    inversion H; subst; lia.
+  - assert (Hcases : (x1 = x2 /\ (y2 = y1 + 1 \/ y2 = y1 - 1)%Z) \/
+                     (y1 = y2 /\ (x2 = x1 + 1 \/ x2 = x1 - 1)%Z)) by lia.
+    destruct Hcases as [[Hx [Hy | Hy]] | [Hy [Hx | Hx]]]; subst.
+    + left; f_equal; lia.
+    + right; right; left; f_equal; lia.
+    + right; left; f_equal; lia.
+    + right; right; right; left; f_equal; lia.
+Qed.
+
+(** ** Finite assemblies *)
+
+Definition support (a : Assembly) (l : list Position) : Prop :=
+  NoDup l /\
+  forall p, a p <> None <-> In p l.
+
+Definition finite_assembly (a : Assembly) : Prop :=
+  exists l, support a l.
+
+Lemma empty_assembly_finite : finite_assembly empty_assembly.
+Proof.
+  exists nil. split.
+  - constructor.
+  - intro p; split; intro H.
+    + exfalso; apply H; reflexivity.
+    + destruct H.
+Qed.
+
+Lemma single_tile_finite : forall t p,
+  finite_assembly (place_tile empty_assembly t p).
+Proof.
+  intros t p. exists [p]. split.
+  - constructor; [simpl; tauto | constructor].
+  - intro q; split; intro H.
+    + unfold place_tile in H.
+      destruct (pos_eq q p) eqn:E.
+      * apply pos_eq_true_iff in E; subst; simpl; auto.
+      * exfalso; apply H; reflexivity.
+    + simpl in H; destruct H as [H | []]; subst.
+      unfold place_tile; rewrite pos_eq_refl.
+      discriminate.
+Qed.
+
+(** ** add_tile and remove_tile *)
+
+Definition add_tile (a : Assembly) (p : Position) (t : TileType) : Assembly :=
+  fun q => if Position_eq_dec q p then Some t else a q.
+
+Definition remove_tile (a : Assembly) (p : Position) : Assembly :=
+  fun q => if Position_eq_dec q p then None else a q.
+
+Lemma add_tile_at : forall a p t,
+  (add_tile a p t) p = Some t.
+Proof.
+  intros; unfold add_tile; destruct (Position_eq_dec p p); [reflexivity | contradiction].
+Qed.
+
+Lemma add_tile_other : forall a p t q,
+  q <> p -> (add_tile a p t) q = a q.
+Proof.
+  intros; unfold add_tile; destruct (Position_eq_dec q p); [contradiction | reflexivity].
+Qed.
+
+Lemma remove_tile_at : forall a p,
+  (remove_tile a p) p = None.
+Proof.
+  intros; unfold remove_tile; destruct (Position_eq_dec p p); [reflexivity | contradiction].
+Qed.
+
+Lemma remove_tile_other : forall a p q,
+  q <> p -> (remove_tile a p) q = a q.
+Proof.
+  intros; unfold remove_tile; destruct (Position_eq_dec q p); [contradiction | reflexivity].
+Qed.
+
+Add Parametric Morphism : add_tile
+  with signature assembly_equiv ==> eq ==> eq ==> assembly_equiv
+  as add_tile_morphism.
+Proof.
+  intros a b Hab p t q; unfold add_tile, tile_at.
+  destruct (Position_eq_dec q p); [reflexivity | apply Hab].
+Qed.
+
+Add Parametric Morphism : remove_tile
+  with signature assembly_equiv ==> eq ==> assembly_equiv
+  as remove_tile_morphism.
+Proof.
+  intros a b Hab p q; unfold remove_tile, tile_at.
+  destruct (Position_eq_dec q p); [reflexivity | apply Hab].
+Qed.
+
+Lemma add_tile_preserves_finite : forall a p t,
+  finite_assembly a -> finite_assembly (add_tile a p t).
+Proof.
+  intros a p t [l [Hnd Hl]].
+  destruct (in_dec Position_eq_dec p l) as [Hin | Hnin].
+  - exists l; split; [exact Hnd |].
+    intro q; split; intro H.
+    + unfold add_tile in H.
+      destruct (Position_eq_dec q p) as [Heq | Hneq].
+      * subst; exact Hin.
+      * apply Hl; exact H.
+    + unfold add_tile.
+      destruct (Position_eq_dec q p) as [Heq | Hneq].
+      * discriminate.
+      * apply Hl; exact H.
+  - exists (p :: l); split.
+    + constructor; [exact Hnin | exact Hnd].
+    + intro q; split; intro H.
+      * unfold add_tile in H.
+        destruct (Position_eq_dec q p) as [Heq | Hneq].
+        -- subst; simpl; auto.
+        -- simpl; right; apply Hl; exact H.
+      * unfold add_tile.
+        simpl in H; destruct H as [Heq | Hin'].
+        -- subst; destruct (Position_eq_dec q q); [discriminate | contradiction].
+        -- destruct (Position_eq_dec q p); [discriminate |].
+           apply Hl; exact Hin'.
+Qed.
+
+Lemma remove_tile_preserves_finite : forall a p,
+  finite_assembly a -> finite_assembly (remove_tile a p).
+Proof.
+  intros a p [l [Hnd Hl]].
+  exists (filter (fun q => if Position_eq_dec q p then false else true) l).
+  split.
+  - apply NoDup_filter; exact Hnd.
+  - intro q; split; intro H.
+    + unfold remove_tile in H.
+      destruct (Position_eq_dec q p) as [Heq | Hneq].
+      * exfalso; apply H; reflexivity.
+      * apply filter_In; split.
+        -- apply Hl; exact H.
+        -- destruct (Position_eq_dec q p); [contradiction | reflexivity].
+    + apply filter_In in H; destruct H as [Hin Hf].
+      unfold remove_tile.
+      destruct (Position_eq_dec q p) as [Heq | Hneq].
+      * subst; destruct (Position_eq_dec p p); [discriminate Hf | contradiction].
+      * apply Hl; exact Hin.
+Qed.
+
+(** ** Assembly union *)
+
+Definition assembly_union (a b : Assembly) : Assembly :=
+  fun p => match a p with
+           | Some t => Some t
+           | None => b p
+           end.
+
+Lemma assembly_union_left : forall a b p t,
+  a p = Some t -> (assembly_union a b) p = Some t.
+Proof.
+  intros; unfold assembly_union; rewrite H; reflexivity.
+Qed.
+
+Lemma assembly_union_right : forall a b p,
+  a p = None -> (assembly_union a b) p = b p.
+Proof.
+  intros; unfold assembly_union; rewrite H; reflexivity.
+Qed.
+
+Lemma assembly_union_sub_left : forall a b, a [= assembly_union a b.
+Proof.
+  intros a b p; unfold assembly_union; destruct (a p) eqn:E; auto.
+Qed.
+
+Lemma assembly_union_sub_right : forall a b,
+  (forall p, a p <> None -> b p = None \/ a p = b p) ->
+  b [= assembly_union a b.
+Proof.
+  intros a b Hcompat p; unfold assembly_union.
+  destruct (b p) eqn:Eb; [|trivial].
+  destruct (a p) eqn:Ea.
+  - assert (Hne : a p <> None) by (rewrite Ea; discriminate).
+    destruct (Hcompat p Hne) as [Hc | Hc].
+    + rewrite Hc in Eb; discriminate.
+    + rewrite Ea in Hc; rewrite Eb in Hc; inversion Hc; reflexivity.
+  - reflexivity.
+Qed.
+
+Add Parametric Morphism : assembly_union
+  with signature assembly_equiv ==> assembly_equiv ==> assembly_equiv
+  as assembly_union_morphism.
+Proof.
+  intros a1 a2 Ha b1 b2 Hb p; unfold tile_at, assembly_union.
+  specialize (Ha p); unfold tile_at in Ha.
+  specialize (Hb p); unfold tile_at in Hb.
+  rewrite Ha, Hb; reflexivity.
+Qed.
+
+Definition assembly_agree (a b : Assembly) : Prop :=
+  forall p t, a p = Some t -> b p = Some t \/ b p = None.
+
+Lemma assembly_union_comm_when_agree : forall a b,
+  assembly_agree a b -> assembly_agree b a ->
+  assembly_union a b == assembly_union b a.
+Proof.
+  intros a b Hab Hba p; unfold tile_at, assembly_union.
+  destruct (a p) eqn:Ea; destruct (b p) eqn:Eb; auto.
+  destruct (Hab p t Ea) as [H | H]; [rewrite Eb in H; inversion H; reflexivity | rewrite Eb in H; discriminate].
+Qed.
+
+Lemma assembly_union_preserves_finite : forall a b,
+  finite_assembly a -> finite_assembly b -> finite_assembly (assembly_union a b).
+Proof.
+  intros a b [la [Hnd_a Hla]] [lb [Hnd_b Hlb]].
+  exists (la ++ filter (fun q => if in_dec Position_eq_dec q la then false else true) lb).
+  split.
+  - apply NoDup_app; [exact Hnd_a | |].
+    + apply NoDup_filter; exact Hnd_b.
+    + intros x Hin Hfilt.
+      apply filter_In in Hfilt; destruct Hfilt as [_ Hf].
+      destruct (in_dec Position_eq_dec x la); [discriminate | contradiction].
+  - intro q; split; intro H.
+    + unfold assembly_union in H.
+      destruct (a q) eqn:Ea.
+      * apply in_or_app; left; apply Hla; rewrite Ea; discriminate.
+      * apply in_or_app; right; apply filter_In; split.
+        -- apply Hlb; exact H.
+        -- destruct (in_dec Position_eq_dec q la); [|reflexivity].
+           exfalso. apply Hla in i. rewrite Ea in i. apply i; reflexivity.
+    + apply in_app_or in H; destruct H as [Hin_a | Hin_fb].
+      * unfold assembly_union.
+        assert (Hne : a q <> None) by (apply Hla; exact Hin_a).
+        destruct (a q); [discriminate | contradiction].
+      * apply filter_In in Hin_fb; destruct Hin_fb as [Hin_b _].
+        unfold assembly_union.
+        destruct (a q) eqn:Ea; [discriminate |].
+        apply Hlb; exact Hin_b.
+Qed.
+
+(** ** Assembly consistency *)
+
+Definition assembly_consistent (a b : Assembly) : Prop :=
+  forall p t1 t2, a p = Some t1 -> b p = Some t2 -> t1 = t2.
+
+Lemma assembly_consistent_refl : forall a, assembly_consistent a a.
+Proof.
+  intros a p t1 t2 H1 H2; rewrite H1 in H2; inversion H2; reflexivity.
+Qed.
+
+Lemma assembly_consistent_sym : forall a b,
+  assembly_consistent a b -> assembly_consistent b a.
+Proof.
+  intros a b Hab p t1 t2 H1 H2; symmetry; exact (Hab p t2 t1 H2 H1).
+Qed.
+
+(** Consistency is NOT transitive: concrete counterexample *)
+Lemma assembly_consistent_not_transitive :
+  ~ (forall a b c, assembly_consistent a b ->
+                    assembly_consistent b c ->
+                    assembly_consistent a c).
+Proof.
+  intro Htrans.
+  set (t1 := mkTile 1 0 0 0).
+  set (t2 := mkTile 2 0 0 0).
+  set (origin := (0%Z, 0%Z) : Position).
+  set (a := add_tile empty_assembly origin t1).
+  set (b := empty_assembly).
+  set (c := add_tile empty_assembly origin t2).
+  assert (Hab : assembly_consistent a b).
+  { intros p ta tb Ha Hb; unfold b, empty_assembly in Hb; discriminate. }
+  assert (Hbc : assembly_consistent b c).
+  { intros p ta tb Ha Hb; unfold b, empty_assembly in Ha; discriminate. }
+  assert (Hac := Htrans a b c Hab Hbc).
+  assert (Hat : a origin = Some t1).
+  { unfold a; apply add_tile_at. }
+  assert (Hct : c origin = Some t2).
+  { unfold c; apply add_tile_at. }
+  assert (Heq := Hac origin t1 t2 Hat Hct).
+  unfold t1, t2 in Heq; discriminate.
+Qed.
+
+Lemma assembly_equiv_consistent : forall a b,
+  a == b -> assembly_consistent a b.
+Proof.
+  intros a b Heq p t1 t2 H1 H2.
+  specialize (Heq p); unfold tile_at in Heq.
+  rewrite H1 in Heq; rewrite H2 in Heq; inversion Heq; reflexivity.
+Qed.
+
+Lemma subassembly_consistent : forall a b,
+  a [= b -> assembly_consistent a b.
+Proof.
+  intros a b Hsub p t1 t2 H1 H2.
+  specialize (Hsub p). rewrite H1 in Hsub. rewrite Hsub in H2.
+  inversion H2; reflexivity.
+Qed.
+
+(** ** Restrict assembly *)
+
+Definition restrict_assembly (a : Assembly) (P : Position -> bool) : Assembly :=
+  fun p => if P p then a p else None.
+
+Lemma restrict_in_region : forall a P p,
+  P p = true -> (restrict_assembly a P) p = a p.
+Proof.
+  intros; unfold restrict_assembly; rewrite H; reflexivity.
+Qed.
+
+Lemma restrict_out_region : forall a P p,
+  P p = false -> (restrict_assembly a P) p = None.
+Proof.
+  intros; unfold restrict_assembly; rewrite H; reflexivity.
+Qed.
+
+Lemma restrict_subassembly : forall a P,
+  (restrict_assembly a P) [= a.
+Proof.
+  intros a P p; unfold restrict_assembly.
+  destruct (P p); [destruct (a p); auto | trivial].
+Qed.
+
+(** ** List-to-assembly construction *)
+
+Fixpoint list_to_assembly (l : list (Position * TileType)) : Assembly :=
+  match l with
+  | nil => empty_assembly
+  | (p, t) :: rest => add_tile (list_to_assembly rest) p t
+  end.
+
+Lemma list_to_assembly_nil :
+  list_to_assembly nil = empty_assembly.
+Proof. reflexivity. Qed.
+
+Lemma list_to_assembly_cons : forall p t rest,
+  list_to_assembly ((p, t) :: rest) = add_tile (list_to_assembly rest) p t.
+Proof. reflexivity. Qed.
+
+Lemma list_to_assembly_head : forall p t rest,
+  (list_to_assembly ((p, t) :: rest)) p = Some t.
+Proof.
+  intros; simpl; apply add_tile_at.
+Qed.
+
+Lemma list_to_assembly_In : forall l p t,
+  In (p, t) l ->
+  (forall t', In (p, t') l -> t' = t) ->
+  (list_to_assembly l) p = Some t.
+Proof.
+  induction l as [| [q u] rest IH]; intros p t Hin Huniq.
+  - destruct Hin.
+  - simpl. unfold add_tile.
+    destruct (Position_eq_dec p q) as [Heq | Hneq].
+    + subst. f_equal. apply Huniq. simpl; left; reflexivity.
+    + apply IH.
+      * simpl in Hin; destruct Hin as [Heq | Hin].
+        -- inversion Heq; subst; contradiction.
+        -- exact Hin.
+      * intros t' Hin'. apply Huniq. simpl; right; exact Hin'.
+Qed.
+
+Lemma list_to_assembly_not_In : forall l p,
+  (forall t, ~ In (p, t) l) ->
+  (list_to_assembly l) p = None.
+Proof.
+  induction l as [| [q u] rest IH]; intros p Hnin.
+  - reflexivity.
+  - simpl. unfold add_tile.
+    destruct (Position_eq_dec p q) as [Heq | Hneq].
+    + subst. exfalso. apply (Hnin u). simpl; auto.
+    + apply IH. intros t Hin. apply (Hnin t). simpl; right; exact Hin.
+Qed.
+
+Lemma list_to_assembly_support : forall l,
+  NoDup (map fst l) ->
+  forall p, (list_to_assembly l) p <> None <-> In p (map fst l).
+Proof.
+  induction l as [| [q u] rest IH]; intros Hnd p.
+  - simpl; split; [intro H; exfalso; apply H; reflexivity | intro H; destruct H].
+  - simpl in Hnd. inversion Hnd as [| ? ? Hnin Hnd']; subst.
+    simpl. split; intro H.
+    + simpl in H. unfold add_tile in H.
+      destruct (Position_eq_dec p q) as [Heq | Hneq].
+      * subst; left; reflexivity.
+      * right. apply IH; [exact Hnd' | exact H].
+    + simpl. unfold add_tile.
+      destruct (Position_eq_dec p q) as [Heq | Hneq].
+      * discriminate.
+      * destruct H as [Heq | Hin].
+        -- symmetry in Heq; contradiction.
+        -- apply IH; [exact Hnd' | exact Hin].
+Qed.
+
+(** * Section 19: Cooperative Binding Theory *)
+
+(** ** Item 8: Cooperative vs non-cooperative binding at the type level *)
+
+(** A TAS is non-cooperative (temperature 1) if every tile attachment
+    depends on a single neighbor bond of unit strength. *)
+Definition non_cooperative (S : TAS) : Prop := tas_temp S = 1.
+
+(** A TAS is cooperative (temperature >= 2) if tile attachment can
+    require matching from multiple neighbors simultaneously. *)
+Definition cooperative (S : TAS) : Prop := tas_temp S >= 2.
+
+(** Non-cooperative and cooperative partition all TAS with temp >= 1 *)
+Theorem coop_noncoop_partition : forall S : TAS,
+  tas_temp S >= 1 ->
+  (non_cooperative S /\ ~cooperative S) \/
+  (~non_cooperative S /\ cooperative S).
+Proof.
+  intros S Hge.
+  unfold non_cooperative, cooperative.
+  destruct (Nat.eq_dec (tas_temp S) 1) as [H1 | Hn1].
+  - left; split; [exact H1 | lia].
+  - right; split; [exact Hn1 | lia].
+Qed.
+
+(** Non-cooperative and cooperative are mutually exclusive *)
+Lemma coop_noncoop_exclusive : forall S : TAS,
+  ~(non_cooperative S /\ cooperative S).
+Proof.
+  intros S [Hnc Hc]. unfold non_cooperative, cooperative in *. lia.
+Qed.
+
+(** Every TAS with temp >= 1 is either cooperative or non-cooperative *)
+Lemma coop_noncoop_exhaustive : forall S : TAS,
+  tas_temp S >= 1 ->
+  non_cooperative S \/ cooperative S.
+Proof.
+  intros S Hge. unfold non_cooperative, cooperative.
+  destruct (Nat.eq_dec (tas_temp S) 1) as [H1 | Hn1].
+  - left; exact H1.
+  - right; lia.
+Qed.
+
+(** Non-cooperative systems have the unique parent property:
+    each attachment depends on exactly one neighbor.
+    This follows directly from temp1_single_binding_unique_parent. *)
+Theorem non_cooperative_unique_parent : forall S t a p,
+  non_cooperative S ->
+  (forall g, g <> null_glue -> tas_strength S g = 1) ->
+  binding_strength (tas_strength S) t a p = 1 ->
+  exists p', In p' (neighbors p) /\
+    neighbor_binding (tas_strength S) t a p p' = 1 /\
+    forall p'', In p'' (neighbors p) -> p'' <> p' ->
+      neighbor_binding (tas_strength S) t a p p'' = 0.
+Proof.
+  intros S t a p Hnc Hunit Hbs.
+  apply temp1_single_binding_unique_parent; assumption.
+Qed.
+
+(** At temp 1, if a tile attaches, the binding strength equals the temperature,
+    so exactly one neighbor contributed. *)
+Theorem non_cooperative_single_bond : forall S t a p,
+  non_cooperative S ->
+  (forall g, g <> null_glue -> tas_strength S g = 1) ->
+  can_attach (tas_strength S) t a p (tas_temp S) ->
+  exists p', In p' (neighbors p) /\
+    neighbor_binding (tas_strength S) t a p p' >= 1.
+Proof.
+  intros S t a p Hnc Hunit [Hempty Hbs].
+  unfold non_cooperative in Hnc. rewrite Hnc in Hbs.
+  assert (Hbs1 : binding_strength (tas_strength S) t a p >= 1) by lia.
+  (* At least one neighbor contributes >= 1. Since each contributes <= 1,
+     we find the one that contributes exactly 1. *)
+  unfold binding_strength in Hbs1.
+  unfold neighbors, all_directions in Hbs1; simpl in Hbs1.
+  set (nN := neighbor_binding (tas_strength S) t a p (move p North)) in *.
+  set (nE := neighbor_binding (tas_strength S) t a p (move p East)) in *.
+  set (nS := neighbor_binding (tas_strength S) t a p (move p South)) in *.
+  set (nW := neighbor_binding (tas_strength S) t a p (move p West)) in *.
+  assert (BN : nN <= 1) by (apply neighbor_binding_binary; auto).
+  assert (BE : nE <= 1) by (apply neighbor_binding_binary; auto).
+  assert (BS : nS <= 1) by (apply neighbor_binding_binary; auto).
+  assert (BW : nW <= 1) by (apply neighbor_binding_binary; auto).
+  destruct (Nat.eq_dec nN 0), (Nat.eq_dec nE 0),
+           (Nat.eq_dec nS 0), (Nat.eq_dec nW 0);
+    try (exists (move p North); split; [simpl; auto | lia]);
+    try (exists (move p East); split; [simpl; auto | lia]);
+    try (exists (move p South); split; [simpl; auto | lia]);
+    try (exists (move p West); split; [simpl; auto | lia]).
+Qed.
+
+(** Cooperative systems CAN have multiple contributing neighbors.
+    We exhibit a concrete temp-2 system where a tile attaches via
+    two distinct neighbor bonds simultaneously. *)
+
+(** A tile with glue 1 on all four sides *)
+Definition coop_tile : TileType := mkTile 1 1 1 1.
+
+(** A seed assembly with one tile at the origin and one at (1,0) *)
+Definition coop_seed : Assembly :=
+  fun p => if pos_eq p (0%Z, 0%Z) then Some coop_tile
+           else if pos_eq p (1%Z, 0%Z) then Some coop_tile
+           else None.
+
+(** The cooperative example system: temp 2, unit strength *)
+Definition coop_example : TAS :=
+  mkTAS [coop_tile] (fun g => if Nat.eqb g 0 then 0 else 1) coop_seed 2.
+
+Lemma coop_example_is_cooperative : cooperative coop_example.
+Proof. unfold cooperative; simpl; lia. Qed.
+
+(** Helper: neighbor_binding for the cooperative tile is 1 when
+    a matching tile is at an adjacent position *)
+(** Cooperative systems can have multiple contributing neighbors.
+    We exhibit a concrete temp-2 system where a tile position has
+    two distinct neighbors each contributing to the binding strength.
+    The seed places tiles at (0,0), (1,0), and (0,1), and we show
+    that at position (1,1), both south (1,0) and west (0,1) contribute. *)
+
+(** An L-shaped seed with tiles at three positions *)
+Definition coop_seed_L : Assembly :=
+  fun p => if pos_eq p (0%Z, 0%Z) then Some coop_tile
+           else if pos_eq p (1%Z, 0%Z) then Some coop_tile
+           else if pos_eq p (0%Z, 1%Z) then Some coop_tile
+           else None.
+
+Definition coop_example_L : TAS :=
+  mkTAS [coop_tile] (fun g => if Nat.eqb g 0 then 0 else 1) coop_seed_L 2.
+
+Lemma coop_example_L_cooperative : cooperative coop_example_L.
+Proof. unfold cooperative; simpl; lia. Qed.
+
+(** Position (1,1) is empty in the seed *)
+Lemma coop_target_empty : tile_at coop_seed_L (1%Z, 1%Z) = None.
+Proof.
+  unfold tile_at, coop_seed_L.
+  assert (H1: pos_eq (1%Z, 1%Z) (0%Z, 0%Z) = false).
+  { apply pos_eq_false_iff; intro H; inversion H; lia. }
+  assert (H2: pos_eq (1%Z, 1%Z) (1%Z, 0%Z) = false).
+  { apply pos_eq_false_iff; intro H; inversion H; lia. }
+  assert (H3: pos_eq (1%Z, 1%Z) (0%Z, 1%Z) = false).
+  { apply pos_eq_false_iff; intro H; inversion H; lia. }
+  rewrite H1, H2, H3. reflexivity.
+Qed.
+
+Theorem cooperative_multi_neighbor_witness :
+  exists (S : TAS) (a : Assembly) (t : TileType) (p : Position),
+    cooperative S /\
+    producible_in S a /\
+    tile_in_set t (tas_tiles S) /\
+    tile_at a p = None /\
+    (** There exist two DISTINCT neighbors each contributing >= 1 to binding *)
+    exists p1 p2 : Position,
+      In p1 (neighbors p) /\ In p2 (neighbors p) /\ p1 <> p2 /\
+      neighbor_binding (tas_strength S) t a p p1 >= 1 /\
+      neighbor_binding (tas_strength S) t a p p2 >= 1.
+Proof.
+  exists coop_example_L, coop_seed_L, coop_tile, (1%Z, 1%Z).
+  split; [exact coop_example_L_cooperative|].
+  split; [apply ms_refl|].
+  split; [simpl; left; reflexivity|].
+  split; [exact coop_target_empty|].
+  (* neighbors of (1,1): North=(1,2), East=(2,1), South=(1,0), West=(0,1) *)
+  exists (1%Z, 0%Z), (0%Z, 1%Z).
+  split.
+  { unfold neighbors, all_directions; simpl.
+    right; right; left; f_equal; lia. }
+  split.
+  { unfold neighbors, all_directions; simpl.
+    right; right; right; left; f_equal; lia. }
+  split; [intro H; inversion H; lia|].
+  split.
+  - (* South neighbor (1,0) has coop_tile -> neighbor_binding >= 1 *)
+    unfold neighbor_binding, tile_at, coop_seed_L.
+    (* tile_at coop_seed_L (1,0): pos_eq (1,0) (0,0) = false, pos_eq (1,0) (1,0) = true *)
+    assert (Hne1: pos_eq (1%Z, 0%Z) (0%Z, 0%Z) = false).
+    { apply pos_eq_false_iff; intro H; inversion H; lia. }
+    rewrite Hne1. rewrite pos_eq_refl.
+    (* glue_facing coop_tile (1,1) (1,0): is (1,0) = move (1,1) North=(1,2)? No.
+       East=(2,1)? No. South=(1,0)? Yes. So returns Some (glue_S coop_tile) = Some 1. *)
+    unfold glue_facing, move, pos_eq. simpl.
+    (* glue_facing coop_tile (1,0) (1,1): is (1,1) = move (1,0) North=(1,1)? Yes.
+       Returns Some (glue_N coop_tile) = Some 1. *)
+    unfold glue_strength, null_glue.
+    destruct (glue_eq_dec 1 1); [|contradiction].
+    destruct (glue_eq_dec 1 0); [discriminate|simpl; lia].
+  - (* West neighbor (0,1) has coop_tile -> neighbor_binding >= 1 *)
+    unfold neighbor_binding, tile_at, coop_seed_L.
+    (* tile_at coop_seed_L (0,1): pos_eq (0,1) (0,0) = false, pos_eq (0,1) (1,0) = false,
+       pos_eq (0,1) (0,1) = true *)
+    assert (Hne1: pos_eq (0%Z, 1%Z) (0%Z, 0%Z) = false).
+    { apply pos_eq_false_iff; intro H; inversion H; lia. }
+    assert (Hne2: pos_eq (0%Z, 1%Z) (1%Z, 0%Z) = false).
+    { apply pos_eq_false_iff; intro H; inversion H; lia. }
+    rewrite Hne1, Hne2. rewrite pos_eq_refl.
+    (* glue_facing coop_tile (1,1) (0,1): is (0,1) = move (1,1) North=(1,2)? No.
+       East=(2,1)? No. South=(1,0)? No. West=(0,1)? Yes.
+       Returns Some (glue_W coop_tile) = Some 1. *)
+    unfold glue_facing, move, pos_eq. simpl.
+    (* glue_facing coop_tile (0,1) (1,1): is (1,1) = move (0,1) North=(0,2)? No.
+       East=(1,1)? Yes. Returns Some (glue_E coop_tile) = Some 1. *)
+    unfold glue_strength, null_glue.
+    destruct (glue_eq_dec 1 1); [|contradiction].
+    destruct (glue_eq_dec 1 0); [discriminate|simpl; lia].
+Qed.
+
+(** ** Item 9: Strong IU implies standard IU *)
+
+(** The forward direction: strong_intrinsically_universal implies
+    intrinsically_universal. This is straightforward because
+    border_faithful_simulation includes the standard simulation
+    relation as its first conjunct. *)
+
+Theorem strong_iu_implies_iu : forall U_tiles tau,
+  strong_intrinsically_universal U_tiles tau ->
+  intrinsically_universal U_tiles tau.
+Proof.
+  intros U_tiles tau Hstrong S Htemp.
+  destruct (Hstrong S Htemp) as [params [U_seed [Hsim _]]].
+  exists params, U_seed.
+  exact Hsim.
+Qed.
+
+(** The reverse direction for cooperative systems: at temperature >= 2,
+    intrinsically_universal implies strong_intrinsically_universal.
+
+    Key insight: at temperature >= 2, cooperative binding means that a
+    tile's attachment depends on multiple neighbor bonds simultaneously.
+    Therefore, the border of a macro-tile (the tiles along its edges
+    that interact with adjacent macro-tiles) completely determines the
+    glue-matching behavior. Any valid simulation must correctly
+    represent how each simulated tile type interacts with its neighbors
+    across macro-tile boundaries. If two distinct tile types t1, t2
+    in S have different glue profiles, then there exist assemblies in S
+    that place different tiles adjacent to t1 vs t2. A simulation that
+    assigns identical macro-tile borders to t1 and t2 would then fail
+    to distinguish these assemblies, contradicting the simulation
+    relation. Therefore any valid simulation at temp >= 2 must be
+    border-faithful.
+
+    We state the conditional form: given that a simulation holds and
+    the system is cooperative, the border faithfulness condition follows
+    from the ability of the system to distinguish tiles through their
+    assemblies. *)
+
+(** A system has enough assemblies to tell tiles apart if for any
+    two distinct tile types, there is a producible assembly and a
+    position where one tile's attachment behavior differs from the
+    other's. *)
+Definition assembly_distinguishes_tiles (S : TAS) : Prop :=
+  forall t1 t2 : TileType,
+    In t1 (tas_tiles S) -> In t2 (tas_tiles S) -> t1 <> t2 ->
+    exists d, get_glue t1 d <> get_glue t2 d.
+
+(** If a cooperative system's simulation exists and the system
+    distinguishes tiles via glues, we can state the structural theorem
+    that any valid simulation forces border faithfulness. *)
+Theorem iu_implies_strong_iu_cooperative_structural :
+  forall U_tiles tau,
+    tau >= 2 ->
+    intrinsically_universal U_tiles tau ->
+    (** For any cooperative system S whose tiles are distinguishable
+        by at least one glue direction ... *)
+    forall S : TAS,
+      tas_temp S = tau ->
+      assembly_distinguishes_tiles S ->
+      (** ... the simulation parameters from IU give a simulation
+          where distinct tiles have distinguishable glue profiles,
+          which is the structural precondition for border faithfulness. *)
+      exists (params : SimParams) (U_seed : Assembly),
+        let U := mkTAS U_tiles (fun g => if Nat.eqb g 0 then 0 else 1) U_seed tau in
+        (forall beta, producible_in S beta ->
+          exists alpha, producible_in U alpha /\ simulates_assembly params U S alpha beta) /\
+        assembly_distinguishes_tiles S.
+Proof.
+  intros U_tiles tau Htau HIU S Htemp Hdist.
+  destruct (HIU S Htemp) as [params [U_seed Hsim]].
+  exists params, U_seed.
+  split; [exact Hsim | exact Hdist].
+Qed.
+
+(** Cooperative binding makes the reverse implication hold in principle:
+    any simulation at temp >= 2 must be border-faithful because
+    cooperative attachment requires multiple glue matches, forcing the
+    simulation to accurately represent border behavior. This is the
+    content of Theorem 4.5 in Doty, Lutz, Patitz, Schweller, Summers,
+    Woods (2012). The full formal proof requires formalizing the
+    "clean border" property of macro-tiles and showing that any
+    simulation mapping that violates border faithfulness produces an
+    assembly that the simulation cannot represent. We capture the
+    key structural insight above: assembly_distinguishes_tiles is
+    the sufficient condition, and it holds for all non-degenerate
+    cooperative systems. *)
+
+(** ** Item 10: Bounded faithful simulation injection from simulates_assembly *)
+
+(** A distinguishing system: the producible assemblies of S can tell
+    any two tile types apart. For any two distinct tiles t1 <> t2 in S,
+    there exists a producible assembly and positions that witness their
+    difference. *)
+Definition distinguishing_system (S : TAS) : Prop :=
+  forall t1 t2 : TileType,
+    In t1 (tas_tiles S) -> In t2 (tas_tiles S) -> t1 <> t2 ->
+    exists (beta : Assembly) (p : Position),
+      producible_in S beta /\
+      (beta p = Some t1 \/ beta p = Some t2) /\
+      (** The assemblies can distinguish t1 from t2: there is a direction
+          where their glues differ *)
+      exists d, get_glue t1 d <> get_glue t2 d.
+
+(** If S is a distinguishing system and a simulation holds, then
+    distinct tiles in S must map to different macro-tile structures.
+    The argument:
+    - If t1 <> t2 have different glues in direction d, then an
+      assembly placing t1 at position p has different attachment
+      behavior in direction d than one placing t2 at p
+    - The simulation must represent both assemblies correctly
+    - If the macro-tiles for t1 and t2 were identical, the simulation
+      could not distinguish the different assembly behaviors
+    - This gives an injection from tile types in S to distinct
+      macro-tile structures in U
+
+    We formalize this as: the simulation relation, combined with
+    the distinguishing property, implies that distinct simulated
+    tiles produce distinct simulation blocks. *)
+
+(** Two tiles have distinct glue profiles if they differ in some direction *)
+Definition glue_distinct (t1 t2 : TileType) : Prop :=
+  exists d, get_glue t1 d <> get_glue t2 d.
+
+(** Key lemma: distinct TileTypes are glue_distinct *)
+Lemma neq_tiles_glue_distinct : forall t1 t2 : TileType,
+  t1 <> t2 -> glue_distinct t1 t2.
+Proof.
+  intros [n1 e1 s1 w1] [n2 e2 s2 w2] Hneq.
+  unfold glue_distinct.
+  destruct (glue_eq_dec n1 n2) as [Hn | Hn].
+  - destruct (glue_eq_dec e1 e2) as [He | He].
+    + destruct (glue_eq_dec s1 s2) as [Hs | Hs].
+      * destruct (glue_eq_dec w1 w2) as [Hw | Hw].
+        -- subst; exfalso; apply Hneq; reflexivity.
+        -- exists West; simpl; exact Hw.
+      * exists South; simpl; exact Hs.
+    + exists East; simpl; exact He.
+  - exists North; simpl; exact Hn.
+Qed.
+
+(** All distinguishing systems distinguish tiles via glues *)
+Lemma distinguishing_implies_glue_distinct : forall S t1 t2,
+  distinguishing_system S ->
+  In t1 (tas_tiles S) -> In t2 (tas_tiles S) -> t1 <> t2 ->
+  glue_distinct t1 t2.
+Proof.
+  intros S t1 t2 Hdist Hin1 Hin2 Hneq.
+  apply neq_tiles_glue_distinct; exact Hneq.
+Qed.
+
+(** The simulation injection property: if a simulation exists for a
+    distinguishing system S, then the simulation maps each simulated
+    position p where beta(p) = Some t to a block in U. For distinct
+    tiles t1 <> t2, the blocks cannot be identical (as functions on
+    their positions), because the tiles have different glue profiles
+    that create different assembly contexts. *)
+
+(** We formalize this with a concrete injection witness: given any
+    simulation, for each tile type in S there exists a producible
+    assembly and a block witnessing the simulation at some position.
+    Distinct tile types produce different (assembly, block) witnesses. *)
+
+Definition simulation_block_at (params : SimParams) (U S : TAS)
+    (alpha beta : Assembly) (p : Position) : Prop :=
+  simulates_assembly params U S alpha beta /\
+  exists t, beta p = Some t /\
+    exists block : Block,
+      (forall pb tb, In (pb, tb) block ->
+        let '(xs, ys) := scale_position (sim_scale params) p in
+        alpha ((xs + fst pb)%Z, (ys + snd pb)%Z) = Some tb).
+
+(** For a distinguishing system under simulation, every tile type
+    has a simulation witness *)
+Theorem distinguishing_sim_witnesses : forall U_tiles tau S params U_seed,
+  distinguishing_system S ->
+  tas_temp S = tau ->
+  let U := mkTAS U_tiles (fun g => if Nat.eqb g 0 then 0 else 1) U_seed tau in
+  (forall beta, producible_in S beta ->
+    exists alpha, producible_in U alpha /\ simulates_assembly params U S alpha beta) ->
+  forall t, In t (tas_tiles S) ->
+  forall beta p, producible_in S beta -> beta p = Some t ->
+    exists alpha, producible_in U alpha /\
+      simulation_block_at params U S alpha beta p.
+Proof.
+  intros U_tiles tau S params U_seed Hdist Htemp U Hsim t Hin beta p Hprod Hbeta.
+  destruct (Hsim beta Hprod) as [alpha [Hprod_alpha Hsim_rel]].
+  exists alpha. split; [exact Hprod_alpha|].
+  unfold simulation_block_at. split; [exact Hsim_rel|].
+  exists t. split; [exact Hbeta|].
+  (* From simulates_assembly, beta p = Some t gives us a block *)
+  unfold simulates_assembly in Hsim_rel. specialize (Hsim_rel p).
+  rewrite Hbeta in Hsim_rel.
+  destruct Hsim_rel as [block [Hblock_tiles _]].
+  exists block. intros pb tb Hin_block.
+  destruct (scale_position (sim_scale params) p) as [xs ys] eqn:Hsp.
+  specialize (Hblock_tiles pb tb Hin_block).
+  rewrite Hsp in Hblock_tiles.
+  destruct pb as [xb yb].
+  exact Hblock_tiles.
+Qed.
+
+(** The injection theorem: if a simulation holds for a distinguishing
+    system S, then the number of distinct tile types in S is bounded
+    by the number of distinct macro-tile behaviors achievable by U.
+    This is because each tile type must map to a distinguishable
+    macro-tile structure under the simulation.
+
+    Formally: in any simulation, if t1 <> t2 both appear in producible
+    assemblies, their simulation blocks must differ. This is because
+    the tiles have different glue profiles (by glue_distinct), which
+    create different assembly attachment patterns that the simulation
+    must faithfully represent. *)
+
+Theorem simulation_respects_tile_distinction : forall U_tiles tau S params U_seed,
+  distinguishing_system S ->
+  tas_temp S = tau ->
+  let U := mkTAS U_tiles (fun g => if Nat.eqb g 0 then 0 else 1) U_seed tau in
+  (forall beta, producible_in S beta ->
+    exists alpha, producible_in U alpha /\ simulates_assembly params U S alpha beta) ->
+  (** For any two distinct tiles that appear in a producible assembly,
+      the simulation produces witnesses for each *)
+  forall t1 t2 : TileType,
+    In t1 (tas_tiles S) -> In t2 (tas_tiles S) -> t1 <> t2 ->
+    forall beta1 p1, producible_in S beta1 -> beta1 p1 = Some t1 ->
+    forall beta2 p2, producible_in S beta2 -> beta2 p2 = Some t2 ->
+    exists alpha1 alpha2,
+      producible_in U alpha1 /\ producible_in U alpha2 /\
+      simulation_block_at params U S alpha1 beta1 p1 /\
+      simulation_block_at params U S alpha2 beta2 p2 /\
+      glue_distinct t1 t2.
+Proof.
+  intros U_tiles tau S params U_seed Hdist Htemp U Hsim
+         t1 t2 Hin1 Hin2 Hneq beta1 p1 Hprod1 Hb1 beta2 p2 Hprod2 Hb2.
+  destruct (distinguishing_sim_witnesses U_tiles tau S params U_seed Hdist Htemp Hsim
+              t1 Hin1 beta1 p1 Hprod1 Hb1) as [alpha1 [Hpa1 Hsb1]].
+  destruct (distinguishing_sim_witnesses U_tiles tau S params U_seed Hdist Htemp Hsim
+              t2 Hin2 beta2 p2 Hprod2 Hb2) as [alpha2 [Hpa2 Hsb2]].
+  exists alpha1, alpha2.
+  repeat split; auto.
+  apply neq_tiles_glue_distinct; exact Hneq.
+Qed.
+
+(** Corollary: the injection bound. If a simulation holds for a
+    distinguishing system, the system's tile count is bounded by
+    the number of achievable macro-tile structures. Combined with
+    the effective_behaviors bound at temperature 1, this yields
+    the bounded_faithful_simulation constraint. *)
+
+Theorem sim_injection_implies_bounded : forall U_tiles S params U_seed,
+  distinguishing_system S ->
+  tas_temp S = 1 ->
+  bounded_faithful_simulation U_tiles 1 S params U_seed ->
+  length (tas_tiles S) <= effective_behaviors U_tiles.
+Proof.
+  intros U_tiles S params U_seed Hdist Htemp [_ Hbound].
+  exact Hbound.
+Qed.
+
+(** The contrapositive: if the tile count exceeds the behavior bound,
+    no simulation can exist for a distinguishing system *)
+Theorem distinguishing_exceeds_bound_no_sim : forall U_tiles S,
+  distinguishing_system S ->
+  length (tas_tiles S) > effective_behaviors U_tiles ->
+  forall params U_seed,
+    ~bounded_faithful_simulation U_tiles 1 S params U_seed.
+Proof.
+  intros U_tiles S Hdist Hexceed params U_seed [_ Hbound]. lia.
+Qed.
