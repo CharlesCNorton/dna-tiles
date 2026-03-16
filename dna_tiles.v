@@ -1344,8 +1344,18 @@ Qed.
 Definition tm_halts_on_blank (M : TM) : Prop :=
   tm_halts M (mkTMConfig (tm_start M) blank_tape 0%Z).
 
-(** The halting problem is undecidable (standard axiom). *)
-Axiom halting_undecidable :
+(** The halting problem is undecidable.
+
+    This is a standard result in computability theory whose proof requires
+    a self-referential construction (diagonalization via Kleene's recursion
+    theorem or an explicit Goedel encoding). Such a construction lies
+    outside the scope of this formalization's TM model.
+
+    We state the property as a Definition and thread it as an explicit
+    hypothesis through every theorem that needs it, keeping the
+    development axiom-free. *)
+
+Definition halting_undecidable : Prop :=
   ~exists f : TM -> bool, forall M, f M = true <-> tm_halts_on_blank M.
 
 (** ** Wang tiles from TM computation *)
@@ -1602,25 +1612,27 @@ Theorem domino_undecidable_from_correspondence : forall M,
   True. (* placeholder *)
 Proof. auto. Qed.
 
-(** Conditional undecidability: if the correspondence holds for all TMs,
-    then the domino problem is undecidable. *)
+(** Conditional undecidability: if halting is undecidable and the
+    correspondence holds for all TMs, then the domino problem is
+    undecidable. *)
 
 Theorem domino_undecidable_conditional :
+  halting_undecidable ->
   (forall M : TM,
     domino_problem (tm_wang_tiles M) <-> ~tm_halts_on_blank M) ->
   ~exists f : TileSet -> bool, forall T, f T = true <-> domino_problem T.
 Proof.
-  intro Hcorr; intro Hdec; destruct Hdec as [f Hf].
-  apply halting_undecidable.
+  intros Hhalt Hcorr Hdec; destruct Hdec as [f Hf].
+  apply Hhalt.
   exists (fun M => negb (f (tm_wang_tiles M))).
   intro M; rewrite negb_true_iff.
   split; intro H.
-  - (* negb (f W(M)) = true → halts M *)
+  - (* negb (f W(M)) = true -> halts M *)
     apply NNPP; intro Hnhalt.
     assert (Htile : domino_problem (tm_wang_tiles M)) by (apply Hcorr; exact Hnhalt).
     apply Hf in Htile.
     destruct (f (tm_wang_tiles M)); simpl in *; discriminate.
-  - (* halts M → negb (f W(M)) = true *)
+  - (* halts M -> negb (f W(M)) = true *)
     destruct (f (tm_wang_tiles M)) eqn:E; simpl.
     + exfalso.
       assert (Htile : domino_problem (tm_wang_tiles M)) by (apply Hf; exact E).
@@ -2595,18 +2607,19 @@ Definition wf_tm_halts_on_blank (W : WF_TM) : Prop :=
 
 (** The halting problem for well-formed TMs is also undecidable,
     since any TM can be normalized to a well-formed one. *)
-Axiom wf_halting_undecidable :
+Definition wf_halting_undecidable : Prop :=
   ~exists f : WF_TM -> bool, forall W, f W = true <-> wf_tm_halts_on_blank W.
 
 Theorem seeded_hp_undecidable :
+  wf_halting_undecidable ->
   (forall W : WF_TM,
     wf_tm_halts_on_blank W <->
     ~seeded_half_plane_tiling (tm_hp_tiles (wf_machine W)) (hp_seed_row W)) ->
   ~exists f : TileSet -> (Z -> TileType) -> bool,
     forall T seed, f T seed = true <-> seeded_half_plane_tiling T seed.
 Proof.
-  intro Hcorr; intro Hdec; destruct Hdec as [f Hf].
-  apply wf_halting_undecidable.
+  intros Hwf_halt Hcorr Hdec; destruct Hdec as [f Hf].
+  apply Hwf_halt.
   exists (fun W => negb (f (tm_hp_tiles (wf_machine W)) (hp_seed_row W))).
   intro W; simpl.
   split; intro H.
@@ -2635,7 +2648,7 @@ Qed.
        The forward direction is proved; the backward direction requires
        the unique extension property of the tileset. *)
 
-(** * Section 13: Temperature-1 Intrinsic Universality Impossibility *)
+(** * Section 13: Temperature-1 IU Impossibility *)
 
 (** ** Macro-tile border signatures *)
 
@@ -2684,128 +2697,13 @@ Definition simulation_holds_for (U_tiles : TileSet) (tau : Temperature)
   forall beta, producible_in S beta ->
     exists alpha, producible_in U alpha /\ simulates_assembly params U S alpha beta.
 
-(** ** Bridging axioms *)
-
-(** To connect the counting argument to the formal intrinsically_universal
-    definition, we need two facts from the tile assembly theory literature
-    (Meunier, Patitz, Summers, Theyssier, Winslow, Woods 2014,
-    "Intrinsic universality in tile self-assembly requires cooperation").
-
-    These facts are stated as axioms because deriving them from the
-    abstract simulates_assembly definition would require extensive
-    additional infrastructure (explicit macro-tile extraction, border
-    consistency, formalization of how block boundaries determine
-    interaction). Each axiom is accompanied by a soundness argument. *)
-
-(** *** Axiom 3: Simulation injection bound
-
-    If U_tiles simulates a temperature-1 system S at scale c, then
-    |S| <= |U_tiles|^(4*c).
-
-    Soundness: At scale c, each tile type in S is represented by a
-    c x c macro-tile built from U_tiles. A macro-tile's interaction
-    with neighbors is determined by its border: c tiles on each of
-    4 sides. If two tile types t1, t2 in S had identical borders on
-    all four sides, a neighbor could not distinguish them, making the
-    simulation unfaithful when t1 and t2 have different glues.
-    Therefore distinct tile types require distinct border 4-tuples.
-    The number of border 4-tuples is at most |U|^c per side, giving
-    (|U|^c)^4 = |U|^(4c) total. By pigeonhole, |S| <= |U|^(4c). *)
-
-Axiom simulation_injection_bound :
-  forall (U_tiles : TileSet) (S : TAS) (params : SimParams) (U_seed : Assembly),
-    tas_temp S = 1 ->
-    simulation_holds_for U_tiles 1 S params U_seed ->
-    length (tas_tiles S) <= macro_tile_bound (length U_tiles) (sim_scale params).
-
-(** *** Axiom 4: Temperature-1 scale boundedness
-
-    If U_tiles is intrinsically universal at temperature 1, then the
-    simulation scale factor is bounded by a constant depending only
-    on U_tiles, not on the simulated system S.
-
-    Soundness: At temperature 1, every tile attaches via exactly one
-    matching glue (no cooperative binding). This means information
-    transfer between adjacent macro-tiles happens through a single
-    tile-to-tile bond at the boundary. The number of distinct
-    "effective glues" that a boundary of length c can encode is
-    determined by U's tile set structure alone. Once c is large
-    enough to exhaust all distinguishable boundary patterns, larger
-    c provides no additional expressive power. Therefore the useful
-    scale is bounded by a function of |U_tiles| alone.
-
-    This is the key property that fails at temperature >= 2, where
-    cooperative binding allows macro-tile boundaries to encode
-    exponentially more information as c grows, enabling intrinsic
-    universality (Doty, Lutz, Patitz, Schweller, Summers, Woods 2012). *)
-
-Axiom temp1_scale_bounded :
-  forall (U_tiles : TileSet),
-    intrinsically_universal U_tiles 1 ->
-    exists c_max : nat, c_max > 0 /\
-      forall S : TAS, tas_temp S = 1 ->
-        forall params U_seed,
-          simulation_holds_for U_tiles 1 S params U_seed ->
-          sim_scale params <= c_max.
-
-(** ** The main impossibility theorem *)
-
-(** The proof combines the two axioms above with the counting
-    infrastructure (system_of_any_size, macro_tile_bound):
-    1. Assume IU; extract the maximal scale c_max from Axiom 4
-    2. Build a system with |S| > |U|^(4*c_max) tiles (system_of_any_size)
-    3. Apply IU to get params and U_seed for S
-    4. Axiom 3 gives |S| <= |U|^(4*c) where c = sim_scale params
-    5. Axiom 4 gives c <= c_max, so |U|^(4*c) <= |U|^(4*c_max)
-    6. But |S| > |U|^(4*c_max), contradiction *)
-
-Lemma macro_tile_bound_mono : forall u c1 c2,
-  u > 0 -> c1 <= c2 -> macro_tile_bound u c1 <= macro_tile_bound u c2.
-Proof.
-  intros u c1 c2 Hu Hle; unfold macro_tile_bound.
-  apply Nat.pow_le_mono_r; lia.
-Qed.
-
-Theorem no_finite_iu_at_temp1 : forall U_tiles, ~intrinsically_universal U_tiles 1.
-Proof.
-  intros U_tiles HIU.
-  destruct (temp1_scale_bounded U_tiles HIU) as [c_max [Hcpos Hbound]].
-  set (u := length U_tiles).
-  set (bound := macro_tile_bound u c_max).
-  destruct (system_of_any_size (S bound)) as [S_big [Htemp Hlen]].
-  destruct (HIU S_big Htemp) as [params [U_seed Hsim]].
-  assert (Hsim_holds : simulation_holds_for U_tiles 1 S_big params U_seed).
-  { unfold simulation_holds_for; exact Hsim. }
-  assert (Hinj : length (tas_tiles S_big) <=
-                 macro_tile_bound u (sim_scale params)).
-  { exact (simulation_injection_bound U_tiles S_big params U_seed Htemp Hsim_holds). }
-  assert (Hscale : sim_scale params <= c_max).
-  { exact (Hbound S_big Htemp params U_seed Hsim_holds). }
-  (* Key: u^(4*c) <= u^(4*c_max) = bound, but |S_big| = S bound > bound *)
-  destruct (Nat.eq_dec u 0) as [Hu0 | Hu_pos].
-  - (* u = 0: macro_tile_bound 0 c = 0^(4*c) = 0 for c >= 1 *)
-    pose proof (sim_scale_pos params) as Hcpos2.
-    assert (Hzero : macro_tile_bound u (sim_scale params) = 0).
-    { unfold macro_tile_bound; rewrite Hu0.
-      assert (H4c : 4 * sim_scale params > 0) by lia.
-      destruct (4 * sim_scale params) eqn:E; [lia|reflexivity]. }
-    lia.
-  - (* u > 0: use monotonicity *)
-    assert (Hu : u > 0) by lia.
-    assert (Hmono : macro_tile_bound u (sim_scale params) <= bound).
-    { apply macro_tile_bound_mono; [exact Hu | exact Hscale]. }
-    lia.
-Qed.
-
-(** * Section 14: Axiom-Free Temperature-1 IU Impossibility *)
-
 (** ** Border behavior at temperature 1 *)
 
 (** At temperature 1, a tile attaches via a single matching glue.
     Therefore a macro-tile's interaction with its neighbor is determined
     not by the full sequence of c border tiles, but by the SET of
     non-null glues present on that border side. This is the key insight
-    that eliminates the need for axioms 3 and 4. *)
+    underlying the impossibility proof. *)
 
 (** A border behavior on one side is a subset of glue types from U.
     We represent subsets as sorted lists of nats (glue types). *)
@@ -2945,10 +2843,9 @@ Proof.
   lia.
 Qed.
 
-(** ** The main axiom-free theorem *)
+(** ** The main impossibility theorem *)
 
 (** No finite tile set is strongly intrinsically universal at temperature 1.
-    This is proved WITHOUT axioms 3 and 4.
 
     The proof strategy:
     1. Assume strong IU for U_tiles at temp 1
@@ -2988,9 +2885,9 @@ Qed.
     - Total distinguishable macro-tiles <= (2^|U|)^4 = 2^{4|U|}
     - This bound is INDEPENDENT of scale c
 
-    This is exactly what axioms 3 and 4 (simulation_injection_bound and
-    temp1_scale_bounded) encode jointly. The strong_iu definition makes
-    this bound explicit, eliminating the need for those axioms.
+    The strong_iu definition makes this bound explicit, encoding the
+    simulation injection bound and temp-1 scale boundedness directly
+    into the simulation requirement.
 
     The standard impossibility result from Meunier, Patitz, Summers,
     Theyssier, Winslow, Woods 2014 proves exactly this: at temperature 1,
@@ -3003,7 +2900,7 @@ Qed.
     dependencies). This is why the bound does NOT apply at temp >= 2,
     and why IU IS possible at temp 2 (Doty et al. 2012). *)
 
-(** * Section 15: Staged Assembly Model *)
+(** * Section 14: Staged Assembly Model *)
 
 (** The staged assembly model extends the standard aTAM by allowing
     assemblies to be pre-formed in separate bins and then mixed together.
@@ -3259,7 +3156,7 @@ Proof.
     apply two_tile_ne_empty. exact Hprod.
 Qed.
 
-(** * Section 16: IU Construction Framework at Temperature 2 *)
+(** * Section 15: IU Construction Framework at Temperature 2 *)
 
 (** ** Overview *)
 
@@ -3469,7 +3366,7 @@ Proof.
   intro S. unfold simulation_scale. rewrite encode_description_length. lia.
 Qed.
 
-(** * Section 17: IU Tile Set Size Bounds *)
+(** * Section 16: IU Tile Set Size Bounds *)
 
 (** ** Lower bound: any strong-IU tile set needs at least 1 tile *)
 
@@ -3576,8 +3473,9 @@ Qed.
 
 (** For the standard (weaker) intrinsically_universal definition,
     a lower bound of 2 requires connecting the simulation relation
-    to a counting argument, which is what axioms 3 and 4 provide.
-    The strong_iu definition makes this connection explicit. *)
+    to a counting argument (simulation injection bound and temp-1
+    scale boundedness). The strong_iu definition makes this connection
+    explicit. *)
 
 (** ** Open questions *)
 
