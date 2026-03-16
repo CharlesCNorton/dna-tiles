@@ -1,13 +1,21 @@
-COQMAKEFILE := Makefile.coq
+ROCQC := rocq compile
+OPTS := -R . DNATiles
 
-all: $(COQMAKEFILE)
-	$(MAKE) -f $(COQMAKEFILE)
+VFILES := Core.v Results.v Advanced.v
+VOFILES := $(VFILES:.v=.vo)
 
-$(COQMAKEFILE): _CoqProject
-	rocq makefile -f _CoqProject -o $(COQMAKEFILE) 2>/dev/null || coq_makefile -f _CoqProject -o $(COQMAKEFILE)
+all: $(VOFILES)
+
+Core.vo: Core.v
+	$(ROCQC) $(OPTS) Core.v
+
+Results.vo: Results.v Core.vo
+	$(ROCQC) $(OPTS) Results.v
+
+Advanced.vo: Advanced.v Core.vo Results.vo
+	$(ROCQC) $(OPTS) Advanced.v
 
 clean:
-	if [ -f $(COQMAKEFILE) ]; then $(MAKE) -f $(COQMAKEFILE) clean; fi
-	rm -f $(COQMAKEFILE) $(COQMAKEFILE).conf
+	rm -f *.vo *.vok *.vos *.glob *.aux .*.aux
 
 .PHONY: all clean

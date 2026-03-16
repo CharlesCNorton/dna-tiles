@@ -18,5 +18,5 @@ jobs:
           ocaml_version: "4.14-flambda"
           custom_script: |
             startGroup "Build"
-              opam exec -- make
+              opam exec -- dune build
             endGroup
