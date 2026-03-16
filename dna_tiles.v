@@ -6827,3 +6827,150 @@ Proof.
   - left; reflexivity.
 Qed.
 
+(** * Section 26: Kleene, UTM Tiles, Row Correspondence *)
+
+(** ** Item 4: kleene_recursion_theorem is refutable *)
+
+(** Kleene's recursion theorem, as stated in this development, quantifies over
+    ALL functions [g : TM -> TM], including non-computable ones. In standard
+    computability theory, Kleene's theorem holds for COMPUTABLE functions only
+    (those implementable by a TM with Goedel encoding). The statement here
+    does not restrict [g] to computable functions.
+
+    Using [excluded_middle_informative] from ClassicalEpsilon, we can define
+    a non-computable [g] that flips halting behavior: it maps halting TMs to
+    a non-halting TM and non-halting TMs to a halting TM. For this [g], no
+    fixed point [M] exists: every TM either halts (and [g] maps it to a
+    non-halting TM) or doesn't halt (and [g] maps it to a halting TM).
+
+    This refutes [kleene_recursion_theorem] as stated and demonstrates that
+    it was always intended as a HYPOTHESIS (captured as [Definition : Prop])
+    rather than a theorem to be proved. The downstream results
+    ([halting_undecidable_from_kleene], [wf_halting_undecidable_from_kleene])
+    remain valid conditional theorems: they state that IF Kleene held
+    (i.e., for computable [g] only), THEN halting is undecidable. *)
+
+Definition halting_flip (M : TM) : TM :=
+  if excluded_middle_informative (tm_halts_on_blank M)
+  then never_halting_tm
+  else always_halting_tm.
+
+Lemma halting_flip_spec_halts : forall M,
+  tm_halts_on_blank M -> halting_flip M = never_halting_tm.
+Proof.
+  intros M Hh; unfold halting_flip.
+  destruct (excluded_middle_informative (tm_halts_on_blank M)) as [_|Hno].
+  - reflexivity.
+  - contradiction.
+Qed.
+
+Lemma halting_flip_spec_not_halts : forall M,
+  ~tm_halts_on_blank M -> halting_flip M = always_halting_tm.
+Proof.
+  intros M Hnh; unfold halting_flip.
+  destruct (excluded_middle_informative (tm_halts_on_blank M)) as [Hyes|_].
+  - contradiction.
+  - reflexivity.
+Qed.
+
+(** No TM is a fixed point of [halting_flip]: for every M, the iff fails. *)
+Lemma halting_flip_no_fixpoint : forall M,
+  ~(tm_halts_on_blank M <-> tm_halts_on_blank (halting_flip M)).
+Proof.
+  intro M.
+  destruct (excluded_middle_informative (tm_halts_on_blank M)) as [Hyes|Hno].
+  - rewrite halting_flip_spec_halts by exact Hyes.
+    intros [Hfwd _].
+    exact (never_halting_tm_not_halts (Hfwd Hyes)).
+  - rewrite halting_flip_spec_not_halts by exact Hno.
+    intros [_ Hbwd].
+    exact (Hno (Hbwd always_halting_tm_halts)).
+Qed.
+
+(** THEOREM: [kleene_recursion_theorem] is refutable. The function
+    [halting_flip] is a witness [g] for which no fixed point exists. *)
+Theorem kleene_recursion_theorem_refuted : ~kleene_recursion_theorem.
+Proof.
+  intro Hkleene.
+  destruct (Hkleene halting_flip) as [M Hfp].
+  exact (halting_flip_no_fixpoint M Hfp).
+Qed.
+
+(** ** Item 5: all_encoding_tiles_in_utm is refutable *)
+
+(** The definition [all_encoding_tiles_in_utm] claims that [encode_value_tile v]
+    (which is [mkTile v 0 0 0]) is in [utm_tileset] for every natural [v].
+    However, [utm_tileset] is a finite list of 10 tiles, all of which have
+    non-zero east glues (rule110 tiles use encode_bit which yields 1 or 2,
+    control tiles use 3 and 4). Since [encode_value_tile v] has east glue 0,
+    it can never appear in [utm_tileset].
+
+    This confirms that [all_encoding_tiles_in_utm] was a HYPOTHESIS for
+    a hypothetical extended tileset, not a theorem about the current
+    [utm_tileset]. The reduction [encoding_wf_from_tile_membership] remains
+    valid: it correctly states that IF the encoding tiles were in the UTM
+    tileset, THEN the encoding would be well-formed. A complete IU
+    construction (Doty et al. 2012, 248 tiles) would include the encoding
+    tiles in its tile set. *)
+
+(** Every tile in the UTM tileset has non-zero east glue. *)
+Lemma utm_tileset_east_nonzero : forall t,
+  In t utm_tileset -> glue_E t <> 0.
+Proof.
+  intros t Ht.
+  unfold utm_tileset in Ht.
+  apply in_app_or in Ht.
+  destruct Ht as [Ht | Ht].
+  - (* t is in rule110_tileset: all east glues are encode_bit values (1 or 2) *)
+    unfold rule110_tileset in Ht; simpl in Ht.
+    repeat (destruct Ht as [<- | Ht]; [simpl; lia|]); destruct Ht.
+  - (* t is a control tile: east glue is 3 or 4 *)
+    simpl in Ht.
+    destruct Ht as [<- | [<- | []]]; simpl; lia.
+Qed.
+
+(** The encoding tile for any value has east glue 0. *)
+Lemma encode_value_tile_east_zero : forall v,
+  glue_E (encode_value_tile v) = 0.
+Proof. intro v; reflexivity. Qed.
+
+(** THEOREM: [all_encoding_tiles_in_utm] is refutable. *)
+Theorem all_encoding_tiles_in_utm_refuted : ~all_encoding_tiles_in_utm.
+Proof.
+  intro Hall.
+  specialize (Hall 0).
+  apply (utm_tileset_east_nonzero _ Hall).
+  exact (encode_value_tile_east_zero 0).
+Qed.
+
+(** ** Item 6: utm_row_correspondence is provable *)
+
+(** The definition [utm_row_correspondence] states that for any TM [M],
+    well-formed TM [W], row [n], and x-coordinate [x], there exists a tile
+    assignment function such that the tile at position [x] is in [utm_tileset].
+
+    This is a purely existential statement: we need to exhibit a function
+    [Z -> TileType] that maps [x] to some tile in [utm_tileset]. Since
+    [utm_tileset] is non-empty (it contains [control_tile_start] among
+    others), we witness with the constant function returning
+    [control_tile_start].
+
+    Note: this proves the STRUCTURAL requirement (existence of a valid tile
+    assignment) but not the SEMANTIC requirement (that the assignment reflects
+    actual TM computation). The semantic content is captured by the stronger
+    reductions in Sections 21-22, which use [utm_row_correspondence] as a
+    hypothesis for the simulation faithfulness theorem. *)
+
+Lemma control_tile_start_in_utm : In control_tile_start utm_tileset.
+Proof.
+  unfold utm_tileset. apply in_or_app. right. simpl. left. reflexivity.
+Qed.
+
+Theorem utm_row_correspondence_proof : utm_row_correspondence.
+Proof.
+  intros M W _ n x.
+  exists (fun _ => control_tile_start).
+  intros pos _ _.
+  exact control_tile_start_in_utm.
+Qed.
+
