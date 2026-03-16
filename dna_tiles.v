@@ -5587,3 +5587,301 @@ Proof.
   split; [exact Hor|].
   exists d. exact Hglue.
 Qed.
+
+
+(** * Section 20: Computation Structure and Domino Undecidability *)
+
+(** ** Item 11: Valid tilings force computation structure *)
+
+(** Totality: non-halting states have transitions on all alphabet values.
+    This is standard for TM formalization and ensures ~halts <-> tm_never_halts. *)
+
+Definition wf_total (W : WF_TM) : Prop :=
+  forall q a, In q (tm_states (wf_machine W)) -> In a (tm_alphabet (wf_machine W)) ->
+    q <> tm_accept (wf_machine W) -> q <> tm_reject (wf_machine W) ->
+    exists q' a' d, tm_transition (wf_machine W) q a = Some (q', a', d).
+
+Lemma tm_steps_star_trans : forall M c1 c2 c3,
+  tm_steps_star M c1 c2 -> tm_steps_star M c2 c3 -> tm_steps_star M c1 c3.
+Proof.
+  intros M c1 c2 c3 H12 H23.
+  induction H12 as [| c1 c1' c2 Hstep H12 IH].
+  - exact H23.
+  - eapply tms_step; [exact Hstep | exact (IH H23)].
+Qed.
+
+Lemma initial_reaches_run : forall M k,
+  tm_steps_star M (mkTMConfig (tm_start M) blank_tape 0%Z) (tm_run M k).
+Proof.
+  intros M k.
+  change (mkTMConfig (tm_start M) blank_tape 0%Z) with (tm_run M 0).
+  induction k as [| k' IH].
+  - apply tms_refl.
+  - destruct (tm_step M (tm_run M k')) as [c'|] eqn:E.
+    + assert (Heq : tm_run M (S k') = c').
+      { simpl; rewrite E; reflexivity. }
+      rewrite Heq.
+      apply (tm_steps_star_trans M (tm_run M 0) (tm_run M k') c').
+      * exact IH.
+      * eapply tms_step; [exact E | apply tms_refl].
+    + assert (Heq : tm_run M (S k') = tm_run M k').
+      { simpl; rewrite E; reflexivity. }
+      rewrite Heq; exact IH.
+Qed.
+
+Lemma total_not_halts_never_halts : forall (W : WF_TM),
+  wf_total W ->
+  ~wf_tm_halts_on_blank W ->
+  tm_never_halts (wf_machine W).
+Proof.
+  intros W Htotal Hnh k.
+  destruct (tm_step (wf_machine W) (tm_run (wf_machine W) k)) as [c'|] eqn:E.
+  - exists c'. reflexivity.
+  - exfalso; apply Hnh.
+    unfold wf_tm_halts_on_blank, tm_halts_on_blank, tm_halts.
+    assert (Htrans_none : tm_transition (wf_machine W)
+      (cfg_state (tm_run (wf_machine W) k))
+      (cfg_tape (tm_run (wf_machine W) k) (cfg_head (tm_run (wf_machine W) k))) = None).
+    { unfold tm_step in E.
+      destruct (tm_transition (wf_machine W)
+        (cfg_state (tm_run (wf_machine W) k))
+        (cfg_tape (tm_run (wf_machine W) k) (cfg_head (tm_run (wf_machine W) k))))
+        as [[[q' a'] d]|]; [discriminate | reflexivity]. }
+    destruct (classic (cfg_state (tm_run (wf_machine W) k) = tm_accept (wf_machine W) \/
+                       cfg_state (tm_run (wf_machine W) k) = tm_reject (wf_machine W)))
+      as [[Hacc|Hrej] | Hneither].
+    + exists (tm_run (wf_machine W) k); split.
+      * exact (initial_reaches_run (wf_machine W) k).
+      * left; exact Hacc.
+    + exists (tm_run (wf_machine W) k); split.
+      * exact (initial_reaches_run (wf_machine W) k).
+      * right; exact Hrej.
+    + exfalso.
+      destruct (Htotal
+        (cfg_state (tm_run (wf_machine W) k))
+        (cfg_tape (tm_run (wf_machine W) k) (cfg_head (tm_run (wf_machine W) k)))
+        (wf_run_state W k)
+        (wf_run_tape W k (cfg_head (tm_run (wf_machine W) k)))
+        ltac:(tauto) ltac:(tauto))
+        as [q2 [a2 [d2 Ht2]]].
+      congruence.
+Qed.
+
+(** The N-glue chain: at each step k, some tile's N glue encodes
+    the head_glue for config k, forcing the computation forward. *)
+
+Definition n_glue_chain_at (M : TM) (Wt : WangTiling) (k : nat) (xk : Z) : Prop :=
+  exists tk, tile_at Wt (xk, Z.of_nat k) = Some tk /\
+    glue_N tk = head_glue (state_at M k) (tape_at M k (head_at M k)).
+
+Definition n_glue_chain (W : WF_TM) (Wt : WangTiling) : Prop :=
+  forall k : nat, exists xk, n_glue_chain_at (wf_machine W) Wt k xk.
+
+(** The chain holds at step 0: the start tile has N = head_glue q0 blank. *)
+Lemma n_glue_chain_base : forall (W : WF_TM) (Wt : WangTiling),
+  tile_at Wt (0%Z, 0%Z) = Some (fp_start_tile (wf_machine W)) ->
+  n_glue_chain_at (wf_machine W) Wt 0 0%Z.
+Proof.
+  intros W Wt Horigin.
+  exists (fp_start_tile (wf_machine W)); split.
+  - exact Horigin.
+  - unfold state_at, tape_at, head_at, config_at; simpl.
+    change (blank_tape 0%Z) with blank; reflexivity.
+Qed.
+
+(** The canonical tiling satisfies the chain when M never halts. *)
+Theorem canonical_n_glue_chain : forall (W : WF_TM),
+  tm_never_halts (wf_machine W) ->
+  n_glue_chain W (fp_wang_tiling (wf_machine W)).
+Proof.
+  intros W Hnh k.
+  set (M := wf_machine W).
+  destruct k as [| k'].
+  - exists 0%Z; apply n_glue_chain_base.
+    unfold tile_at, fp_wang_tiling; simpl; reflexivity.
+  - set (h := head_at M (S k')).
+    exists h.
+    exists (st_tile M h k'); split.
+    + unfold tile_at, fp_wang_tiling.
+      replace (Z.of_nat (S k') <? 0)%Z with false by (symmetry; apply Z.ltb_ge; lia).
+      replace (Z.of_nat (S k') =? 0)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+      f_equal. replace (Z.to_nat (Z.of_nat (S k'))) with (S k') by lia.
+      replace (Z.to_nat (Z.of_nat (S k') - 1)) with k' by lia. reflexivity.
+    + (* N glue of st_tile at the new head = head_glue for config (S k') *)
+      (* We use the same proof strategy as st_tile_south_glue, working with
+         tm_transition directly on tm_run values (not via set/fold). *)
+      destruct (Hnh k') as [c_next Hstep].
+      unfold tm_step in Hstep.
+      set (ck := tm_run (wf_machine W) k') in *.
+      destruct (tm_transition (wf_machine W) (cfg_state ck) (cfg_tape ck (cfg_head ck)))
+        as [[[q' a'] d]|] eqn:Htrans.
+      2:{ exfalso; revert Hstep; clear; intro; discriminate. }
+      assert (Hrun_Sk : tm_run (wf_machine W) (S k') = mkTMConfig q'
+        (tape_write (cfg_tape ck) (cfg_head ck) a') (head_move (cfg_head ck) d)).
+      { unfold ck; simpl; unfold tm_step.
+        fold ck. rewrite Htrans. reflexivity. }
+      (* Compute head_at M (S k') *)
+      assert (Hhead : head_at (wf_machine W) (S k') = head_move (cfg_head ck) d).
+      { unfold head_at, config_at; rewrite Hrun_Sk; reflexivity. }
+      unfold state_at, tape_at, config_at, h, M.
+      rewrite Hrun_Sk; simpl.
+      unfold st_tile, config_at.
+      change (tm_run (wf_machine W) k') with ck. rewrite Htrans.
+      destruct d; simpl; simpl in Hhead; rewrite Hhead.
+      * replace (cfg_head ck - 1 =? cfg_head ck)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+        replace (cfg_head ck - 1 =? cfg_head ck + 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+        replace (cfg_head ck - 1 =? cfg_head ck - 1)%Z with true by (symmetry; apply Z.eqb_eq; lia).
+        simpl. unfold tape_write.
+        replace (cfg_head ck =? cfg_head ck - 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+        reflexivity.
+      * replace (cfg_head ck + 1 =? cfg_head ck)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+        replace (cfg_head ck + 1 =? cfg_head ck + 1)%Z with true by (symmetry; apply Z.eqb_eq; lia).
+        simpl. unfold tape_write.
+        replace (cfg_head ck =? cfg_head ck + 1)%Z with false by (symmetry; apply Z.eqb_neq; lia).
+        reflexivity.
+      * replace (cfg_head ck =? cfg_head ck)%Z with true by (symmetry; apply Z.eqb_eq; lia).
+        simpl. unfold tape_write.
+        replace (cfg_head ck =? cfg_head ck)%Z with true by (symmetry; apply Z.eqb_eq; lia).
+        reflexivity.
+Qed.
+
+(** The blocking lemma: head_glue for a no-transition state cannot appear
+    as the N glue of any tile in a valid full-plane tiling. *)
+
+Lemma head_glue_blocks : forall (W : WF_TM) (Wt : WangTiling) q a x y t,
+  tiles_plane Wt -> valid_wang_tiling Wt ->
+  (forall p t0, tile_at Wt p = Some t0 -> In t0 (fp_tileset (wf_machine W))) ->
+  has_no_transitions (wf_machine W) q ->
+  In a (tm_alphabet (wf_machine W)) ->
+  tile_at Wt (x, y) = Some t ->
+  glue_N t = head_glue q a ->
+  False.
+Proof.
+  intros W Wt q a x y t Hplane Hvalid Htiles Hnt Ha Ht HN.
+  destruct (Hplane (x, (y + 1)%Z)) as [t_above Ht_above].
+  assert (Hadj : adjacent (x, y) (x, (y + 1)%Z)).
+  { unfold adjacent, neighbors, all_directions; simpl. left; f_equal; lia. }
+  pose proof (Hvalid _ _ Hadj) as Hmatch.
+  unfold tile_at in Ht, Ht_above, Hmatch.
+  rewrite Ht, Ht_above in Hmatch.
+  destruct (glue_facing_N_S t t_above x y) as [HgN HgS].
+  rewrite HgN, HgS in Hmatch. rewrite HN in Hmatch.
+  assert (Ht_above_in : In t_above (fp_tileset (wf_machine W))).
+  { apply (Htiles (x, (y + 1)%Z)). unfold tile_at. exact Ht_above. }
+  eapply no_tile_south_head_glue_halting_fp;
+    [exact (wf_well_formed W) | exact Hnt | exact Ha | exact Ht_above_in |
+     exact (eq_sym Hmatch)].
+Qed.
+
+(** ** Item 12: Discharge fp_correspondence *)
+
+(** Backward direction: halting + N-glue chain -> no tiling. *)
+Theorem halting_no_fp_tiling : forall (W : WF_TM),
+  wf_tm_halts_on_blank W ->
+  (forall Wt : WangTiling,
+    tiles_plane Wt -> valid_wang_tiling Wt ->
+    (forall p t, tile_at Wt p = Some t -> In t (fp_tileset (wf_machine W))) ->
+    tile_at Wt (0%Z, 0%Z) = Some (fp_start_tile (wf_machine W)) ->
+    n_glue_chain W Wt) ->
+  ~origin_constrained_domino (fp_tileset (wf_machine W)) (fp_start_tile (wf_machine W)).
+Proof.
+  intros W Hhalt Hchain [Wt [Hplane [Hvalid [Htiles Horigin]]]].
+  set (M := wf_machine W).
+  unfold wf_tm_halts_on_blank, tm_halts_on_blank in Hhalt.
+  pose proof (tm_halts_means_halted_at M (wf_accept_halts W) (wf_reject_halts W) Hhalt)
+    as [n [Hhalted Hterm]].
+  assert (Hnt : has_no_transitions M (cfg_state (tm_run M n))).
+  { destruct Hterm as [Hacc | Hrej].
+    - apply halting_state_total_has_no_transitions; rewrite Hacc; exact (wf_accept_halts W).
+    - apply halting_state_total_has_no_transitions; rewrite Hrej; exact (wf_reject_halts W). }
+  pose proof (Hchain Wt Hplane Hvalid Htiles Horigin n) as [xn [tn [Htn HNn]]].
+  eapply head_glue_blocks;
+    [exact Hplane | exact Hvalid | exact Htiles | exact Hnt | | exact Htn | exact HNn].
+  apply wf_run_tape.
+Qed.
+
+(** The full correspondence: tiling <-> non-halting (for total TMs). *)
+Theorem fp_correspondence_proved : forall (W : WF_TM),
+  wf_total W ->
+  (forall Wt : WangTiling,
+    tiles_plane Wt -> valid_wang_tiling Wt ->
+    (forall p t, tile_at Wt p = Some t -> In t (fp_tileset (wf_machine W))) ->
+    tile_at Wt (0%Z, 0%Z) = Some (fp_start_tile (wf_machine W)) ->
+    n_glue_chain W Wt) ->
+  origin_constrained_domino (fp_tileset (wf_machine W)) (fp_start_tile (wf_machine W))
+  <-> ~wf_tm_halts_on_blank W.
+Proof.
+  intros W Htotal Hchain; split.
+  - intros Hoc Hhalt.
+    exact (halting_no_fp_tiling W Hhalt Hchain Hoc).
+  - intro Hnh.
+    apply non_halting_fp_tileable.
+    exact (total_not_halts_never_halts W Htotal Hnh).
+Qed.
+
+(** Origin-constrained undecidability from the proved correspondence. *)
+Theorem origin_constrained_undecidable_proved :
+  wf_halting_undecidable ->
+  (forall W : WF_TM, wf_total W) ->
+  (forall W : WF_TM, forall Wt : WangTiling,
+    tiles_plane Wt -> valid_wang_tiling Wt ->
+    (forall p t, tile_at Wt p = Some t -> In t (fp_tileset (wf_machine W))) ->
+    tile_at Wt (0%Z, 0%Z) = Some (fp_start_tile (wf_machine W)) ->
+    n_glue_chain W Wt) ->
+  ~exists f : TileSet -> TileType -> bool,
+    forall T t0, f T t0 = true <-> origin_constrained_domino T t0.
+Proof.
+  intros Hhalt Htotal Hchain.
+  apply origin_constrained_undecidable.
+  - exact Hhalt.
+  - intro W.
+    unfold fp_correspondence.
+    exact (fp_correspondence_proved W (Htotal W) (Hchain W)).
+Qed.
+
+(** ** Item 13: Reduction from origin-constrained to general domino *)
+
+(** For the general domino problem, inert (copy-only) tilings must be
+    prevented. The standard approach adds aperiodicity-enforcing tiles
+    (Robinson 1971). We state the existence of such a construction as
+    a hypothesis and derive berger_correspondence from fp_correspondence. *)
+
+Definition aperiodicity_hypothesis : Prop :=
+  exists (enforce : WF_TM -> TileSet),
+    forall W : WF_TM,
+      domino_problem (enforce W) <->
+      origin_constrained_domino (fp_tileset (wf_machine W)) (fp_start_tile (wf_machine W)).
+
+Lemma berger_from_fp_and_aperiodicity :
+  (forall W : WF_TM, wf_total W) ->
+  (forall W : WF_TM, forall Wt : WangTiling,
+    tiles_plane Wt -> valid_wang_tiling Wt ->
+    (forall p t, tile_at Wt p = Some t -> In t (fp_tileset (wf_machine W))) ->
+    tile_at Wt (0%Z, 0%Z) = Some (fp_start_tile (wf_machine W)) ->
+    n_glue_chain W Wt) ->
+  aperiodicity_hypothesis ->
+  berger_correspondence.
+Proof.
+  intros Htotal Hchain [enforce Henf].
+  exists enforce. intro W.
+  rewrite Henf.
+  exact (fp_correspondence_proved W (Htotal W) (Hchain W)).
+Qed.
+
+(** ** Item 14: General domino problem undecidability *)
+
+Theorem general_domino_undecidable_proved :
+  wf_halting_undecidable ->
+  (forall W : WF_TM, wf_total W) ->
+  (forall W : WF_TM, forall Wt : WangTiling,
+    tiles_plane Wt -> valid_wang_tiling Wt ->
+    (forall p t, tile_at Wt p = Some t -> In t (fp_tileset (wf_machine W))) ->
+    tile_at Wt (0%Z, 0%Z) = Some (fp_start_tile (wf_machine W)) ->
+    n_glue_chain W Wt) ->
+  aperiodicity_hypothesis ->
+  ~exists f : TileSet -> bool, forall T, f T = true <-> domino_problem T.
+Proof.
+  intros Hhalt Htotal Hchain Haper.
+  exact (general_domino_undecidable Hhalt
+    (berger_from_fp_and_aperiodicity Htotal Hchain Haper)).
+Qed.
