@@ -11,17 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install opam
+      - name: Install opam and Rocq
         run: |
           sudo apt-get update
           sudo apt-get install -y opam
           opam init --bare --no-setup --disable-sandboxing
-      - name: Install Rocq
-        run: |
           opam switch create . ocaml-base-compiler.4.14.2 --no-install
           eval $(opam env)
           opam install rocq-core.9.0.0 rocq-stdlib.9.0.0 -y
       - name: Build
-        run: |
-          eval $(opam env)
-          make
+        run: opam exec -- make
