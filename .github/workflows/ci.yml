@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Normalize Workspace Permissions
+        run: sudo chmod -R a+rwX "$GITHUB_WORKSPACE"
       - name: Build
         uses: coq-community/docker-coq-action@v1
         with:
