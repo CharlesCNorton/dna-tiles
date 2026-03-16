@@ -20,4 +20,6 @@ jobs:
           eval $(opam env)
           opam install rocq-core.9.0.0 rocq-stdlib.9.0.0 -y
       - name: Build
-        run: opam exec -- make
+        run: |
+          eval $(opam env --switch=. --set-switch)
+          make
