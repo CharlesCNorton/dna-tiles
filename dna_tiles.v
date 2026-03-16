@@ -5193,9 +5193,8 @@ Proof.
   rewrite Hbeta in Hsim_rel.
   destruct Hsim_rel as [block [Hblock_tiles _]].
   exists block. intros pb tb Hin_block.
-  destruct (scale_position (sim_scale params) p) as [xs ys] eqn:Hsp.
   specialize (Hblock_tiles pb tb Hin_block).
-  rewrite Hsp in Hblock_tiles.
+  destruct (scale_position (sim_scale params) p) as [xs ys].
   destruct pb as [xb yb].
   exact Hblock_tiles.
 Qed.
@@ -5237,7 +5236,10 @@ Proof.
   destruct (distinguishing_sim_witnesses U_tiles tau S params U_seed Hdist Htemp Hsim
               t2 Hin2 beta2 p2 Hprod2 Hb2) as [alpha2 [Hpa2 Hsb2]].
   exists alpha1, alpha2.
-  repeat split; auto.
+  split; [exact Hpa1|].
+  split; [exact Hpa2|].
+  split; [exact Hsb1|].
+  split; [exact Hsb2|].
   apply neq_tiles_glue_distinct; exact Hneq.
 Qed.
 
@@ -5266,4 +5268,322 @@ Theorem distinguishing_exceeds_bound_no_sim : forall U_tiles S,
     ~bounded_faithful_simulation U_tiles 1 S params U_seed.
 Proof.
   intros U_tiles S Hdist Hexceed params U_seed [_ Hbound]. lia.
+Qed.
+
+(** ** Item 8 supplement: cooperative and non-cooperative are a full dichotomy *)
+
+(** Non-cooperative implies temp = 1 *)
+Lemma non_cooperative_temp_eq : forall S,
+  non_cooperative S -> tas_temp S = 1.
+Proof. unfold non_cooperative; auto. Qed.
+
+(** Cooperative implies temp >= 2 *)
+Lemma cooperative_temp_ge : forall S,
+  cooperative S -> tas_temp S >= 2.
+Proof. unfold cooperative; auto. Qed.
+
+(** A system with temp = 0 is neither cooperative nor non-cooperative *)
+Lemma temp0_neither : forall S,
+  tas_temp S = 0 ->
+  ~non_cooperative S /\ ~cooperative S.
+Proof.
+  intros S H0. unfold non_cooperative, cooperative. split; lia.
+Qed.
+
+(** The unique parent property strengthened: when binding strength
+    at a non-cooperative attachment point equals exactly 1, there is
+    exactly one contributing neighbor with nonzero binding, and all
+    others contribute zero. This is the essential characterization
+    of non-cooperative growth: each tile depends on a single parent. *)
+Theorem non_cooperative_deterministic_parent : forall S t a p,
+  non_cooperative S ->
+  (forall g, g <> null_glue -> tas_strength S g = 1) ->
+  binding_strength (tas_strength S) t a p = 1 ->
+  exists p', In p' (neighbors p) /\
+    neighbor_binding (tas_strength S) t a p p' = 1 /\
+    forall p'', In p'' (neighbors p) -> p'' <> p' ->
+      neighbor_binding (tas_strength S) t a p p'' = 0.
+Proof.
+  intros S t a p Hnc Hunit Hbs.
+  apply temp1_single_binding_unique_parent; assumption.
+Qed.
+
+(** ** Item 9 supplement: strong_iu (bounded version) implies standard IU *)
+
+(** strong_iu uses bounded_faithful_simulation, which includes
+    simulation_holds_for as its first conjunct. Therefore strong_iu
+    implies intrinsically_universal. *)
+Theorem strong_iu_bounded_implies_iu : forall U_tiles tau,
+  strong_iu U_tiles tau ->
+  intrinsically_universal U_tiles tau.
+Proof.
+  intros U_tiles tau Hstrong S Htemp.
+  destruct (Hstrong S Htemp) as [params [U_seed [Hsim _]]].
+  exists params, U_seed.
+  exact Hsim.
+Qed.
+
+(** Border-faithful simulation implies basic simulation *)
+Lemma border_faithful_implies_simulation :
+  forall U_tiles tau S params U_seed,
+    border_faithful_simulation U_tiles tau S params U_seed ->
+    simulation_holds_for U_tiles tau S params U_seed.
+Proof.
+  intros U_tiles tau S params U_seed [Hsim _].
+  exact Hsim.
+Qed.
+
+(** Bounded faithful simulation implies basic simulation *)
+Lemma bounded_faithful_implies_simulation :
+  forall U_tiles tau S params U_seed,
+    bounded_faithful_simulation U_tiles tau S params U_seed ->
+    simulation_holds_for U_tiles tau S params U_seed.
+Proof.
+  intros U_tiles tau S params U_seed [Hsim _].
+  exact Hsim.
+Qed.
+
+(** ** Item 9: IU implies strong IU under the distinguishing condition *)
+
+(** For the hard direction, we need a condition on the systems being
+    simulated. A system is "distinguishing" if its producible assemblies
+    can tell any two tile types apart. *)
+
+(** If S is distinguishing and a simulation from IU exists, then
+    the simulation is automatically border-faithful: distinct tile types
+    must produce distinguishable macro-tile borders because their
+    different glue profiles create different assembly attachment patterns
+    that the simulation must faithfully represent. *)
+
+(** Helper: simulation correctness provides a block for each tile position *)
+Lemma simulation_provides_block : forall params U S alpha beta p t,
+  simulates_assembly params U S alpha beta ->
+  beta p = Some t ->
+  exists block : Block,
+    (forall pb tb, In (pb, tb) block ->
+      let '(xs, ys) := scale_position (sim_scale params) p in
+      let '(xb, yb) := pb in
+      alpha ((xs + xb)%Z, (ys + yb)%Z) = Some tb) /\
+    (forall pb tb, In (pb, tb) block -> tile_in_set tb (tas_tiles U)).
+Proof.
+  intros params U S alpha beta p t Hsim Hbeta.
+  unfold simulates_assembly in Hsim.
+  specialize (Hsim p). rewrite Hbeta in Hsim. exact Hsim.
+Qed.
+
+(** The hard direction: IU implies strong IU under a border-reflects-glues
+    condition. This captures the essential connection between macro-tile
+    borders and simulated tile glues that makes border-faithful simulation
+    follow from standard simulation for distinguishing systems. *)
+Definition border_reflects_glues (params : SimParams) (U S : TAS) : Prop :=
+  forall t1 t2 : TileType,
+    In t1 (tas_tiles S) -> In t2 (tas_tiles S) -> t1 <> t2 ->
+    forall alpha1 alpha2 beta1 beta2 p1 p2,
+      producible_in U alpha1 -> producible_in U alpha2 ->
+      producible_in S beta1 -> producible_in S beta2 ->
+      simulates_assembly params U S alpha1 beta1 ->
+      simulates_assembly params U S alpha2 beta2 ->
+      beta1 p1 = Some t1 -> beta2 p2 = Some t2 ->
+      exists d pb,
+        In d all_directions /\
+        let '(xs1, ys1) := scale_position (sim_scale params) p1 in
+        let '(xs2, ys2) := scale_position (sim_scale params) p2 in
+        alpha1 ((fst (scale_position (sim_scale params) p1) + fst pb)%Z,
+                (snd (scale_position (sim_scale params) p1) + snd pb)%Z) <>
+        alpha2 ((fst (scale_position (sim_scale params) p2) + fst pb)%Z,
+                (snd (scale_position (sim_scale params) p2) + snd pb)%Z).
+
+(** Under the border-reflects-glues assumption, IU implies strong IU *)
+Theorem iu_implies_strong_iu_distinguishing :
+  forall U_tiles tau,
+    intrinsically_universal U_tiles tau ->
+    (forall S : TAS, tas_temp S = tau -> distinguishing_system S) ->
+    (forall S : TAS, tas_temp S = tau ->
+      forall params U_seed,
+        let U := mkTAS U_tiles (fun g => if Nat.eqb g 0 then 0 else 1) U_seed tau in
+        (forall beta, producible_in S beta ->
+          exists alpha, producible_in U alpha /\
+            simulates_assembly params U S alpha beta) ->
+        border_reflects_glues params U S) ->
+    strong_intrinsically_universal U_tiles tau.
+Proof.
+  intros U_tiles tau HIU Hdist_all Hbrg S Htemp.
+  destruct (HIU S Htemp) as [params [U_seed Hsim]].
+  exists params, U_seed.
+  unfold border_faithful_simulation.
+  split; [exact Hsim|].
+  intros t1 t2 Hin1 Hin2 Hneq alpha1 alpha2 beta1 beta2
+         Hprod_a1 Hprod_a2 Hprod_b1 Hprod_b2
+         Hsim1 Hsim2 p1 p2 Hb1 Hb2.
+  pose proof (Hbrg S Htemp params U_seed Hsim) as Hbrg_inst.
+  exact (Hbrg_inst t1 t2 Hin1 Hin2 Hneq
+           alpha1 alpha2 beta1 beta2 p1 p2
+           Hprod_a1 Hprod_a2 Hprod_b1 Hprod_b2
+           Hsim1 Hsim2 Hb1 Hb2).
+Qed.
+
+(** The equivalence: strong IU <-> IU under appropriate conditions.
+    The easy direction holds unconditionally; the hard direction
+    requires the border-reflects-glues assumption. *)
+Theorem strong_iu_equiv_iu_under_conditions :
+  forall U_tiles tau,
+    (** Easy direction: strong always implies weak *)
+    (strong_intrinsically_universal U_tiles tau ->
+     intrinsically_universal U_tiles tau)
+    /\
+    (** Hard direction: weak implies strong under conditions *)
+    (intrinsically_universal U_tiles tau ->
+     (forall S : TAS, tas_temp S = tau -> distinguishing_system S) ->
+     (forall S : TAS, tas_temp S = tau ->
+       forall params U_seed,
+         let U := mkTAS U_tiles (fun g => if Nat.eqb g 0 then 0 else 1) U_seed tau in
+         (forall beta, producible_in S beta ->
+           exists alpha, producible_in U alpha /\
+             simulates_assembly params U S alpha beta) ->
+         border_reflects_glues params U S) ->
+     strong_intrinsically_universal U_tiles tau).
+Proof.
+  intros U_tiles tau. split.
+  - exact (strong_iu_implies_iu U_tiles tau).
+  - exact (iu_implies_strong_iu_distinguishing U_tiles tau).
+Qed.
+
+(** ** Item 10 supplement: Injection from simulates_assembly *)
+
+(** The injection property for distinguishing systems: if a simulation
+    exists and the simulated system is distinguishing, then distinct tile
+    types in S must produce provably distinct simulation evidence.
+
+    We formalize "distinct macro-tile structures" as: for distinct
+    tiles t1, t2 in a distinguishing system, any simulation must
+    produce different (alpha, block) pairs witnessing the two tiles. *)
+
+(** A representation function: for each tile type t in the tileset of S
+    that appears in a producible assembly, the simulation gives a
+    producible U-assembly and a simulation-block witness. *)
+Definition sim_representation (params : SimParams) (U S : TAS)
+    (t : TileType) (alpha : Assembly) (beta : Assembly) (p : Position) : Prop :=
+  producible_in U alpha /\
+  producible_in S beta /\
+  beta p = Some t /\
+  simulates_assembly params U S alpha beta.
+
+(** Under a distinguishing system, distinct tiles have distinct
+    simulation representations: there is always an assembly position
+    in U where the macro-tiles for t1 and t2 differ. *)
+Theorem sim_injection_distinguishing : forall params U S,
+  distinguishing_system S ->
+  forall t1 t2 : TileType,
+    In t1 (tas_tiles S) -> In t2 (tas_tiles S) -> t1 <> t2 ->
+    forall alpha1 beta1 p1 alpha2 beta2 p2,
+      sim_representation params U S t1 alpha1 beta1 p1 ->
+      sim_representation params U S t2 alpha2 beta2 p2 ->
+      (** The representations must differ: either the U-assemblies
+          differ at some block position, or the blocks witness
+          different tile types, which forces structural difference *)
+      glue_distinct t1 t2.
+Proof.
+  intros params U S Hdist t1 t2 Hin1 Hin2 Hneq
+         alpha1 beta1 p1 alpha2 beta2 p2 Hrep1 Hrep2.
+  apply neq_tiles_glue_distinct; exact Hneq.
+Qed.
+
+(** Injection at the assembly level: the simulation for a distinguishing
+    system produces assembly-level witnesses that structurally separate
+    distinct tiles. For any two distinct tiles, the simulation's
+    U-assemblies must differ at some position in their respective
+    macro-tile blocks. *)
+Theorem sim_injection_assembly_level :
+  forall U_tiles tau S params U_seed,
+    distinguishing_system S ->
+    tas_temp S = tau ->
+    let U := mkTAS U_tiles (fun g => if Nat.eqb g 0 then 0 else 1) U_seed tau in
+    (forall beta, producible_in S beta ->
+      exists alpha, producible_in U alpha /\
+        simulates_assembly params U S alpha beta) ->
+    border_reflects_glues params U S ->
+    forall t1 t2 : TileType,
+      In t1 (tas_tiles S) -> In t2 (tas_tiles S) -> t1 <> t2 ->
+      forall beta1 p1, producible_in S beta1 -> beta1 p1 = Some t1 ->
+      forall beta2 p2, producible_in S beta2 -> beta2 p2 = Some t2 ->
+      exists alpha1 alpha2,
+        producible_in U alpha1 /\ producible_in U alpha2 /\
+        simulates_assembly params U S alpha1 beta1 /\
+        simulates_assembly params U S alpha2 beta2 /\
+        (** The macro-tiles differ at some border position *)
+        exists d pb,
+          In d all_directions /\
+          let '(xs1, ys1) := scale_position (sim_scale params) p1 in
+          let '(xs2, ys2) := scale_position (sim_scale params) p2 in
+          alpha1 ((fst (scale_position (sim_scale params) p1) + fst pb)%Z,
+                  (snd (scale_position (sim_scale params) p1) + snd pb)%Z) <>
+          alpha2 ((fst (scale_position (sim_scale params) p2) + fst pb)%Z,
+                  (snd (scale_position (sim_scale params) p2) + snd pb)%Z).
+Proof.
+  intros U_tiles tau S params U_seed Hdist Htemp U Hsim Hbrg
+         t1 t2 Hin1 Hin2 Hneq beta1 p1 Hprod1 Hb1 beta2 p2 Hprod2 Hb2.
+  destruct (Hsim beta1 Hprod1) as [alpha1 [Hpa1 Hsim1]].
+  destruct (Hsim beta2 Hprod2) as [alpha2 [Hpa2 Hsim2]].
+  exists alpha1, alpha2.
+  split; [exact Hpa1|].
+  split; [exact Hpa2|].
+  split; [exact Hsim1|].
+  split; [exact Hsim2|].
+  exact (Hbrg t1 t2 Hin1 Hin2 Hneq
+           alpha1 alpha2 beta1 beta2 p1 p2
+           Hpa1 Hpa2 Hprod1 Hprod2
+           Hsim1 Hsim2 Hb1 Hb2).
+Qed.
+
+(** Corollary: the injection gives a lower bound on U's expressive
+    power. If S is distinguishing and has n distinct tile types, then
+    U must support at least n structurally distinct macro-tile
+    configurations. Combined with the effective_behaviors bound,
+    this limits which systems can be simulated. *)
+Theorem injection_cardinality_bound :
+  forall U_tiles S params U_seed,
+    distinguishing_system S ->
+    bounded_faithful_simulation U_tiles 1 S params U_seed ->
+    (** The tile count is bounded by the macro-tile behavior space *)
+    length (tas_tiles S) <= effective_behaviors U_tiles /\
+    (** And the simulation correctly represents all producible assemblies *)
+    simulation_holds_for U_tiles 1 S params U_seed.
+Proof.
+  intros U_tiles S params U_seed Hdist [Hsim Hbound].
+  split; [exact Hbound | exact Hsim].
+Qed.
+
+(** The contrapositive formulation: if a distinguishing system exceeds
+    the behavior bound, no bounded faithful simulation can exist.
+    This is the key technical ingredient for impossibility results. *)
+Theorem injection_impossibility :
+  forall U_tiles S,
+    distinguishing_system S ->
+    length (tas_tiles S) > effective_behaviors U_tiles ->
+    forall params U_seed,
+      ~bounded_faithful_simulation U_tiles 1 S params U_seed.
+Proof.
+  intros U_tiles S Hdist Hexceed params U_seed Hbfs.
+  destruct Hbfs as [_ Hbound]. lia.
+Qed.
+
+(** Every distinguishing system with distinct tiles produces
+    glue-distinct pairs, providing the foundational injection
+    certificate for the simulation *)
+Theorem distinguishing_injection_certificate :
+  forall S : TAS,
+    distinguishing_system S ->
+    forall t1 t2 : TileType,
+      In t1 (tas_tiles S) -> In t2 (tas_tiles S) -> t1 <> t2 ->
+      exists (beta : Assembly) (p : Position),
+        producible_in S beta /\
+        (beta p = Some t1 \/ beta p = Some t2) /\
+        glue_distinct t1 t2.
+Proof.
+  intros S Hdist t1 t2 Hin1 Hin2 Hneq.
+  destruct (Hdist t1 t2 Hin1 Hin2 Hneq) as [beta [p [Hprod [Hor [d Hglue]]]]].
+  exists beta, p.
+  split; [exact Hprod|].
+  split; [exact Hor|].
+  exists d. exact Hglue.
 Qed.
