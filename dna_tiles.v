@@ -3511,3 +3511,862 @@ Definition iu_min_size_open_question : Prop :=
     | Upper | <= 10 | utm_tileset (framework, not complete IU) |
     | Upper | <= 248 | Doty et al. 2012 (complete IU construction) |
     | Optimal | ?  | Open problem (iu_min_size_open_question) | *)
+
+(** * Section 17: Origin-Constrained Domino Problem and Full Z^2 Berger Correspondence *)
+
+(** ** The origin-constrained domino problem *)
+
+(** The standard domino problem asks whether a tileset admits ANY valid tiling
+    of the plane. The origin-constrained variant additionally requires a specific
+    tile at the origin. This variant is also undecidable (Berger 1966) and
+    connects directly to TM computation: the origin tile seeds the computation. *)
+
+Definition origin_constrained_domino (T : TileSet) (t0 : TileType) : Prop :=
+  exists W, tiles_plane W /\ valid_wang_tiling W /\
+    (forall p t, tile_at W p = Some t -> In t T) /\
+    tile_at W (0%Z, 0%Z) = Some t0.
+
+(** ** Full-plane tileset from TM *)
+
+(** The start tile bridges the copy-tile region (y <= 0) with the
+    computation region (y >= 1). It has:
+    - S = cell_glue blank (matching copy tiles below)
+    - N = head_glue (tm_start M) blank (matching the head tile above)
+    - E = W = sig_none (matching copy tiles laterally) *)
+
+Definition fp_start_tile (M : TM) : TileType :=
+  mkTile (head_glue (tm_start M) blank) sig_none (cell_glue blank) sig_none.
+
+(** The full-plane tileset: half-plane computation tiles plus the start tile *)
+Definition fp_tileset (M : TM) : TileSet :=
+  tm_hp_tiles M ++ [fp_start_tile M].
+
+(** ** Tile membership for fp_tileset *)
+
+Lemma fp_start_tile_in_fp : forall M,
+  In (fp_start_tile M) (fp_tileset M).
+Proof.
+  intros M; unfold fp_tileset.
+  apply in_app_iff; right; simpl; left; reflexivity.
+Qed.
+
+Lemma hp_tile_in_fp : forall M t,
+  In t (tm_hp_tiles M) -> In t (fp_tileset M).
+Proof.
+  intros M t Ht; unfold fp_tileset.
+  apply in_app_iff; left; exact Ht.
+Qed.
+
+Lemma wang_copy_in_fp : forall M a,
+  In a (tm_alphabet M) -> In (wang_copy a) (fp_tileset M).
+Proof.
+  intros M a Ha; apply hp_tile_in_fp; apply wang_copy_in_hp_tiles; exact Ha.
+Qed.
+
+Lemma st_tile_in_fp : forall (W : WF_TM) x y,
+  In (st_tile (wf_machine W) x y) (fp_tileset (wf_machine W)).
+Proof.
+  intros W x y; apply hp_tile_in_fp; apply st_tile_in_hp_tiles.
+Qed.
+
+(** ** The full-plane Wang tiling *)
+
+(** The tiling is structured in three regions:
+    - y < 0: all wang_copy blank (the blank lower half)
+    - y = 0: wang_copy blank everywhere except x = 0 where the start tile sits
+    - y > 0: the space-time diagram shifted up by 1 (row y encodes step y-1) *)
+
+Definition fp_wang_tiling (M : TM) : WangTiling :=
+  fun p =>
+    let '(x, y) := p in
+    if (y <? 0)%Z then Some (wang_copy blank)
+    else if (y =? 0)%Z then
+      if (x =? 0)%Z then Some (fp_start_tile M)
+      else Some (wang_copy blank)
+    else Some (st_tile M x (Z.to_nat (y - 1))).
+
+(** ** Helper: glue_facing for specific directions *)
+
+Lemma glue_facing_south : forall t1 t2 x (y : Z),
+  glue_facing t1 (x, y) (x, (y - 1)%Z) = Some (glue_S t1) /\
+  glue_facing t2 (x, (y - 1)%Z) (x, y) = Some (glue_N t2).
+Proof.
+  intros t1 t2 x y.
+  pose proof (glue_facing_N_S t2 t1 x (y - 1)%Z) as [HN HS].
+  replace (y - 1 + 1)%Z with y in * by lia.
+  split; [exact HS | exact HN].
+Qed.
+
+Lemma glue_facing_west : forall t1 t2 x (y : Z),
+  glue_facing t1 (x, y) ((x - 1)%Z, y) = Some (glue_W t1) /\
+  glue_facing t2 ((x - 1)%Z, y) (x, y) = Some (glue_E t2).
+Proof.
+  intros t1 t2 x y.
+  pose proof (glue_facing_E_W t2 t1 (x - 1)%Z y) as [HE HW].
+  replace (x - 1 + 1)%Z with x in * by lia.
+  split; [exact HW | exact HE].
+Qed.
+
+(** ** Start tile glue properties *)
+
+Lemma fp_start_tile_S : forall M,
+  glue_S (fp_start_tile M) = cell_glue blank.
+Proof. intros; reflexivity. Qed.
+
+Lemma fp_start_tile_N : forall M,
+  glue_N (fp_start_tile M) = head_glue (tm_start M) blank.
+Proof. intros; reflexivity. Qed.
+
+Lemma fp_start_tile_E : forall M,
+  glue_E (fp_start_tile M) = sig_none.
+Proof. intros; reflexivity. Qed.
+
+Lemma fp_start_tile_W : forall M,
+  glue_W (fp_start_tile M) = sig_none.
+Proof. intros; reflexivity. Qed.
+
+(** ** Key: S glue of st_tile at row 0 matches N of start/copy tiles *)
+
+(** At x=0, st_tile M 0 0 has S = head_glue(q_start, blank), matching fp_start_tile *)
+Lemma st_tile_0_0_S_glue : forall M q' a' d,
+  tm_transition M (tm_start M) blank = Some (q', a', d) ->
+  glue_S (st_tile M 0 0) = head_glue (tm_start M) blank.
+Proof.
+  intros M q' a' d Htrans.
+  unfold st_tile, config_at, tm_run, cfg_head, cfg_state, cfg_tape; simpl.
+  change (blank_tape 0%Z) with blank.
+  rewrite Htrans.
+  destruct d; simpl; reflexivity.
+Qed.
+
+(** At x<>0 (and not adjacent to head), st_tile M x 0 has S = cell_glue blank *)
+Lemma st_tile_far_S_glue : forall M x q' a' d,
+  tm_transition M (tm_start M) blank = Some (q', a', d) ->
+  (x <> 0)%Z -> (x <> 1)%Z -> (x <> -1)%Z ->
+  glue_S (st_tile M x 0) = cell_glue blank.
+Proof.
+  intros M x q' a' d Htrans Hx0 Hx1 Hxm1.
+  unfold st_tile, config_at, tm_run, cfg_head, cfg_state, cfg_tape; simpl.
+  change (blank_tape 0%Z) with blank.
+  change (blank_tape x) with blank.
+  rewrite Htrans.
+  replace (x =? 0)%Z with false by (symmetry; apply Z.eqb_neq; exact Hx0).
+  replace (x =? 1)%Z with false by (symmetry; apply Z.eqb_neq; exact Hx1).
+  replace (x =? -1)%Z with false by (symmetry; apply Z.eqb_neq; exact Hxm1).
+  simpl; reflexivity.
+Qed.
+
+(** At x=1, st_tile M 1 0 has S = cell_glue blank *)
+Lemma st_tile_1_0_S_glue : forall M q' a' d,
+  tm_transition M (tm_start M) blank = Some (q', a', d) ->
+  glue_S (st_tile M 1 0) = cell_glue blank.
+Proof.
+  intros M q' a' d Htrans.
+  unfold st_tile, config_at; simpl.
+  unfold blank_tape; simpl.
+  rewrite Htrans; simpl.
+  destruct d; simpl; reflexivity.
+Qed.
+
+(** At x=-1, st_tile M (-1) 0 has S = cell_glue blank *)
+Lemma st_tile_m1_0_S_glue : forall M q' a' d,
+  tm_transition M (tm_start M) blank = Some (q', a', d) ->
+  glue_S (st_tile M (-1) 0) = cell_glue blank.
+Proof.
+  intros M q' a' d Htrans.
+  unfold st_tile, config_at; simpl.
+  unfold blank_tape; simpl.
+  rewrite Htrans; simpl.
+  destruct d; simpl; reflexivity.
+Qed.
+
+(** ** Forward direction: non-halting TM -> origin-constrained full-plane tileable *)
+
+Theorem non_halting_fp_tileable : forall (W : WF_TM),
+  tm_never_halts (wf_machine W) ->
+  origin_constrained_domino (fp_tileset (wf_machine W)) (fp_start_tile (wf_machine W)).
+Proof.
+  intros W Hnh.
+  set (M := wf_machine W).
+  (* Extract transition at step 0 for boundary matching *)
+  assert (Htrans0 : exists q' a' d,
+    tm_transition M (tm_start M) blank = Some (q', a', d)).
+  { destruct (Hnh 0%nat) as [c_next Hstep0].
+    unfold tm_step, tm_run, M in Hstep0; simpl in Hstep0.
+    fold M in Hstep0.
+    change (blank_tape 0%Z) with blank in Hstep0.
+    destruct (tm_transition M (tm_start M) blank) as [[[q0 a0] d0]|] eqn:Ht0;
+      [exists q0, a0, d0; reflexivity | discriminate]. }
+  destruct Htrans0 as [q0 [a0 [d0 Htrans0]]].
+  exists (fp_wang_tiling M).
+  split; [| split; [| split]].
+  - (* tiles_plane: every position is tiled *)
+    intros [x y]; unfold fp_wang_tiling, tile_at; simpl.
+    destruct (y <? 0)%Z eqn:Hy.
+    + eexists; reflexivity.
+    + destruct (y =? 0)%Z eqn:Hy0.
+      * destruct (x =? 0)%Z; eexists; reflexivity.
+      * eexists; reflexivity.
+  - (* valid_wang_tiling: the central proof *)
+    (* Helper: glue_facing for adjacent tiles at (x,y) and (x,y+1) *)
+    assert (HgfNS : forall t1 t2 x y,
+      glue_facing t1 (x, y) (x, (y + 1)%Z) = Some (glue_N t1) /\
+      glue_facing t2 (x, (y + 1)%Z) (x, y) = Some (glue_S t2)).
+    { exact glue_facing_N_S. }
+    (* Helper: glue_facing for adjacent tiles at (x,y) and (x+1,y) *)
+    assert (HgfEW : forall t1 t2 x y,
+      glue_facing t1 (x, y) ((x + 1)%Z, y) = Some (glue_E t1) /\
+      glue_facing t2 ((x + 1)%Z, y) (x, y) = Some (glue_W t2)).
+    { exact glue_facing_E_W. }
+    (* Helper: S glue of st_tile M x 0 for all x *)
+    assert (Hst0_S : forall x,
+      glue_S (st_tile M x 0) = if (x =? 0)%Z then head_glue (tm_start M) blank
+                                else cell_glue blank).
+    { intro x.
+      unfold st_tile, config_at, tm_run, cfg_head, cfg_state, cfg_tape; simpl.
+      change (blank_tape 0%Z) with blank.
+      rewrite Htrans0.
+      destruct (x =? 0)%Z eqn:Hx.
+      - destruct d0; simpl; reflexivity.
+      - apply Z.eqb_neq in Hx.
+        change (blank_tape x) with blank.
+        destruct (x =? 1)%Z eqn:Hx1; [destruct d0; simpl; reflexivity|].
+        destruct (x =? -1)%Z eqn:Hxm1; [destruct d0; simpl; reflexivity|].
+        simpl; reflexivity. }
+    (* The main Wang tiling proof *)
+    intros [x1 y1] [x2 y2] Hadj.
+    unfold tile_at, fp_wang_tiling.
+    unfold adjacent, neighbors, all_directions in Hadj; simpl in Hadj.
+    destruct Hadj as [Heq | [Heq | [Heq | [Heq | []]]]]; injection Heq as <- <-.
+    + (* North: (x2,y2) = (x1, y1+1) *)
+      (* Determine regions for y1 and y1+1 *)
+      destruct (y1 <? 0)%Z eqn:Hy1; destruct (y1 + 1 <? 0)%Z eqn:Hy1p1.
+      * (* Both y1 < 0 and y1+1 < 0: copy-copy *)
+        destruct (HgfNS (wang_copy blank) (wang_copy blank) x1 y1) as [HN HS].
+        rewrite HN, HS; simpl; reflexivity.
+      * (* y1 < 0, y1+1 >= 0 => y1 = -1, y1+1 = 0 *)
+        apply Z.ltb_lt in Hy1; apply Z.ltb_ge in Hy1p1.
+        assert (Hy1eq : y1 = (-1)%Z) by lia.
+        replace (y1 + 1 =? 0)%Z with true by (symmetry; apply Z.eqb_eq; lia).
+        destruct (x1 =? 0)%Z eqn:Hx10.
+        -- (* copy below, start tile above *)
+           destruct (HgfNS (wang_copy blank) (fp_start_tile M) x1 y1) as [HN HS].
+           rewrite HN, HS; simpl; reflexivity.
+        -- (* copy below, copy above *)
+           destruct (HgfNS (wang_copy blank) (wang_copy blank) x1 y1) as [HN HS].
+           rewrite HN, HS; simpl; reflexivity.
+      * (* y1 >= 0, y1+1 < 0: impossible *)
+        apply Z.ltb_ge in Hy1; apply Z.ltb_lt in Hy1p1; lia.
+      * (* Both y1 >= 0, y1+1 >= 0 *)
+        apply Z.ltb_ge in Hy1; apply Z.ltb_ge in Hy1p1.
+        destruct (y1 =? 0)%Z eqn:Hy10; destruct (y1 + 1 =? 0)%Z eqn:Hy1p10.
+        -- apply Z.eqb_eq in Hy10; apply Z.eqb_eq in Hy1p10; lia.
+        -- (* y1=0, y1+1>0: bridge row to computation *)
+           apply Z.eqb_eq in Hy10.
+           destruct (x1 =? 0)%Z eqn:Hx10.
+           ++ (* x1=0: start tile to computation *)
+              apply Z.eqb_eq in Hx10.
+              set (t2 := st_tile M x1 (Z.to_nat (y1 + 1 - 1))).
+              destruct (HgfNS (fp_start_tile M) t2 x1 y1) as [HN HS].
+              rewrite HN, HS.
+              (* glue_S t2 = glue_N (fp_start_tile M) *)
+              unfold t2; subst x1; subst y1.
+              replace (Z.to_nat (0 + 1 - 1)) with 0%nat by lia.
+              rewrite Hst0_S; simpl; reflexivity.
+           ++ (* x1<>0: copy to computation *)
+              set (t2 := st_tile M x1 (Z.to_nat (y1 + 1 - 1))).
+              destruct (HgfNS (wang_copy blank) t2 x1 y1) as [HN HS].
+              rewrite HN, HS; simpl.
+              unfold t2; subst y1.
+              replace (Z.to_nat (0 + 1 - 1)) with 0%nat by lia.
+              rewrite Hst0_S; rewrite Hx10; reflexivity.
+        -- (* y1>0, y1+1=0: impossible *)
+           apply Z.eqb_eq in Hy1p10; apply Z.eqb_neq in Hy10; lia.
+        -- (* y1>0, y1+1>0: computation-computation *)
+           apply Z.eqb_neq in Hy10; apply Z.eqb_neq in Hy1p10.
+           set (n := Z.to_nat (y1 - 1)).
+           assert (HnS : Z.to_nat (y1 + 1 - 1) = S n) by (unfold n; lia).
+           destruct (HgfNS (st_tile M x1 n)
+                           (st_tile M x1 (Z.to_nat (y1 + 1 - 1))) x1 y1) as [HN HS].
+           rewrite HN, HS, HnS.
+           symmetry; apply st_tile_south_glue; exact Hnh.
+    + (* East: (x2,y2) = (x1+1, y1) *)
+      destruct (y1 <? 0)%Z eqn:Hy1.
+      * (* y1 < 0: copy-copy *)
+        destruct (HgfEW (wang_copy blank) (wang_copy blank) x1 y1) as [HE HW].
+        rewrite HE, HW; simpl; reflexivity.
+      * apply Z.ltb_ge in Hy1.
+        destruct (y1 =? 0)%Z eqn:Hy10.
+        -- (* y1=0: bridge row *)
+           destruct (x1 =? 0)%Z eqn:Hx10; destruct (x1 + 1 =? 0)%Z eqn:Hx1p10.
+           ++ apply Z.eqb_eq in Hx10; apply Z.eqb_eq in Hx1p10; lia.
+           ++ apply Z.eqb_eq in Hx10; subst x1.
+              destruct (HgfEW (fp_start_tile M) (wang_copy blank) 0%Z y1) as [HE HW].
+              rewrite HE, HW; simpl; reflexivity.
+           ++ apply Z.eqb_eq in Hx1p10.
+              assert (x1 = (-1)%Z) by lia; subst x1.
+              destruct (HgfEW (wang_copy blank) (fp_start_tile M) (-1)%Z y1) as [HE HW].
+              replace ((-1) + 1)%Z with 0%Z in * by lia.
+              rewrite HE, HW; simpl; reflexivity.
+           ++ destruct (HgfEW (wang_copy blank) (wang_copy blank) x1 y1) as [HE HW].
+              rewrite HE, HW; simpl; reflexivity.
+        -- (* y1>0: computation *)
+           apply Z.eqb_neq in Hy10.
+           set (t1 := st_tile M x1 (Z.to_nat (y1 - 1))).
+           set (t2 := st_tile M (x1 + 1)%Z (Z.to_nat (y1 - 1))).
+           destruct (HgfEW t1 t2 x1 y1) as [HE HW].
+           rewrite HE, HW; unfold t1, t2.
+           apply st_tile_ew_glue; exact Hnh.
+    + (* South: (x2,y2) = (x1, y1-1) *)
+      destruct (y1 <? 0)%Z eqn:Hy1; destruct (y1 - 1 <? 0)%Z eqn:Hym1.
+      * (* Both y1 < 0, y1-1 < 0: copy-copy *)
+        destruct (glue_facing_south (wang_copy blank) (wang_copy blank) x1 y1) as [HS HN].
+        rewrite HS, HN; simpl; reflexivity.
+      * (* y1 < 0, y1-1 >= 0: impossible *)
+        apply Z.ltb_lt in Hy1; apply Z.ltb_ge in Hym1; lia.
+      * (* y1 >= 0, y1-1 < 0 => y1 = 0 *)
+        apply Z.ltb_ge in Hy1; apply Z.ltb_lt in Hym1.
+        assert (Hy10 : y1 = 0%Z) by lia.
+        replace (y1 =? 0)%Z with true by (symmetry; apply Z.eqb_eq; lia).
+        destruct (x1 =? 0)%Z eqn:Hx10.
+        -- (* start tile south to copy *)
+           destruct (glue_facing_south (fp_start_tile M) (wang_copy blank) x1 y1) as [HS HN].
+           rewrite HS, HN; simpl; reflexivity.
+        -- (* copy south to copy *)
+           destruct (glue_facing_south (wang_copy blank) (wang_copy blank) x1 y1) as [HS HN].
+           rewrite HS, HN; simpl; reflexivity.
+      * (* Both y1 >= 0, y1-1 >= 0 *)
+        apply Z.ltb_ge in Hy1; apply Z.ltb_ge in Hym1.
+        destruct (y1 =? 0)%Z eqn:Hy10; destruct (y1 - 1 =? 0)%Z eqn:Hym10.
+        -- apply Z.eqb_eq in Hy10; apply Z.eqb_eq in Hym10; lia.
+        -- apply Z.eqb_eq in Hy10; apply Z.eqb_neq in Hym10; lia.
+        -- (* y1>0, y1-1=0 => y1=1: computation to bridge row *)
+           apply Z.eqb_neq in Hy10; apply Z.eqb_eq in Hym10.
+           destruct (x1 =? 0)%Z eqn:Hx10.
+           ++ (* comp at (x1, y1), start tile at (x1, 0) *)
+              apply Z.eqb_eq in Hx10.
+              set (t1 := st_tile M x1 (Z.to_nat (y1 - 1))).
+              destruct (glue_facing_south t1 (fp_start_tile M) x1 y1) as [HS HN].
+              rewrite HS, HN.
+              unfold t1; subst x1.
+              replace (Z.to_nat (y1 - 1)) with 0%nat by lia.
+              rewrite Hst0_S; simpl; reflexivity.
+           ++ (* comp at (x1, y1), copy at (x1, 0) *)
+              set (t1 := st_tile M x1 (Z.to_nat (y1 - 1))).
+              destruct (glue_facing_south t1 (wang_copy blank) x1 y1) as [HS HN].
+              rewrite HS, HN; simpl.
+              unfold t1.
+              replace (Z.to_nat (y1 - 1)) with 0%nat by lia.
+              rewrite Hst0_S; rewrite Hx10; reflexivity.
+        -- (* y1>0, y1-1>0: computation-computation *)
+           apply Z.eqb_neq in Hy10; apply Z.eqb_neq in Hym10.
+           set (n := Z.to_nat (y1 - 1 - 1)).
+           assert (HnS : Z.to_nat (y1 - 1) = S n) by (unfold n; lia).
+           destruct (glue_facing_south (st_tile M x1 (Z.to_nat (y1 - 1)))
+                                       (st_tile M x1 n) x1 y1) as [HS HN].
+           rewrite HS, HN, HnS.
+           apply st_tile_south_glue; exact Hnh.
+    + (* West: (x2,y2) = (x1-1, y1) *)
+      destruct (y1 <? 0)%Z eqn:Hy1.
+      * (* y1 < 0: copy-copy *)
+        destruct (glue_facing_west (wang_copy blank) (wang_copy blank) x1 y1) as [HW HE].
+        rewrite HW, HE; simpl; reflexivity.
+      * apply Z.ltb_ge in Hy1.
+        destruct (y1 =? 0)%Z eqn:Hy10.
+        -- (* y1=0: bridge row *)
+           destruct (x1 =? 0)%Z eqn:Hx10; destruct (x1 - 1 =? 0)%Z eqn:Hxm10.
+           ++ apply Z.eqb_eq in Hx10; apply Z.eqb_eq in Hxm10; lia.
+           ++ apply Z.eqb_eq in Hx10; subst x1.
+              destruct (glue_facing_west (fp_start_tile M) (wang_copy blank) 0%Z y1) as [HW HE].
+              rewrite HW, HE; simpl; reflexivity.
+           ++ apply Z.eqb_eq in Hxm10.
+              assert (x1 = 1%Z) by lia; subst x1.
+              destruct (glue_facing_west (wang_copy blank) (fp_start_tile M) 1%Z y1) as [HW HE].
+              replace (1 - 1)%Z with 0%Z in * by lia.
+              rewrite HW, HE; simpl; reflexivity.
+           ++ destruct (glue_facing_west (wang_copy blank) (wang_copy blank) x1 y1) as [HW HE].
+              rewrite HW, HE; simpl; reflexivity.
+        -- (* y1>0: computation *)
+           apply Z.eqb_neq in Hy10.
+           set (t1 := st_tile M x1 (Z.to_nat (y1 - 1))).
+           set (t2 := st_tile M (x1 - 1)%Z (Z.to_nat (y1 - 1))).
+           destruct (glue_facing_west t1 t2 x1 y1) as [HW HE].
+           rewrite HW, HE; unfold t1, t2.
+           symmetry.
+           enough (H : glue_E (st_tile M (x1 - 1)%Z (Z.to_nat (y1 - 1))) =
+                       glue_W (st_tile M ((x1 - 1) + 1)%Z (Z.to_nat (y1 - 1)))).
+           { replace ((x1 - 1) + 1)%Z with x1 in H by lia; exact H. }
+           apply st_tile_ew_glue; exact Hnh.
+  - (* all tiles from fp_tileset *)
+    intros [x y] t Ht.
+    unfold tile_at, fp_wang_tiling in Ht.
+    destruct (y <? 0)%Z eqn:Hy.
+    + injection Ht as <-; apply wang_copy_in_fp; exact (wf_blank_in_alphabet W).
+    + destruct (y =? 0)%Z eqn:Hy0.
+      * destruct (x =? 0)%Z eqn:Hx0.
+        -- injection Ht as <-; apply fp_start_tile_in_fp.
+        -- injection Ht as <-; apply wang_copy_in_fp; exact (wf_blank_in_alphabet W).
+      * injection Ht as <-; apply st_tile_in_fp.
+  - (* tile at origin = fp_start_tile *)
+    unfold tile_at, fp_wang_tiling; simpl; reflexivity.
+Qed.
+
+(** ** Backward direction: structural blocking property for fp_tileset *)
+
+(** The fp_tileset inherits the blocking property from tm_hp_tiles:
+    no tile in fp_tileset has S = head_glue q a when q is a halting state
+    with no transitions (assuming well-formedness). *)
+
+Lemma no_tile_south_head_glue_halting_fp : forall M q a t,
+  wf_tm M ->
+  has_no_transitions M q ->
+  In a (tm_alphabet M) ->
+  In t (fp_tileset M) ->
+  glue_S t <> head_glue q a.
+Proof.
+  intros M q a t Hwf Hnt Ha Hin.
+  unfold fp_tileset in Hin.
+  apply in_app_iff in Hin; destruct Hin as [Hin | Hin].
+  - (* t in tm_hp_tiles: use the existing blocking lemma *)
+    eapply no_tile_south_head_glue_halting_hp; eauto.
+  - (* t = fp_start_tile M *)
+    simpl in Hin; destruct Hin as [<- | []].
+    simpl. apply cell_glue_not_head_glue. unfold blank; lia.
+Qed.
+
+(** The combined blocking property for well-formed TMs *)
+Lemma no_tile_south_halting_fp : forall (W : WF_TM) n,
+  tm_halted_at (wf_machine W) n ->
+  (cfg_state (tm_run (wf_machine W) n) = tm_accept (wf_machine W) \/
+   cfg_state (tm_run (wf_machine W) n) = tm_reject (wf_machine W)) ->
+  forall t, In t (fp_tileset (wf_machine W)) ->
+    glue_S t <> head_glue (cfg_state (tm_run (wf_machine W) n))
+                          (cfg_tape (tm_run (wf_machine W) n)
+                                    (cfg_head (tm_run (wf_machine W) n))).
+Proof.
+  intros W n Hhalted Hterm t Ht.
+  destruct Hterm as [Hacc | Hrej].
+  - eapply no_tile_south_head_glue_halting_fp; try exact Ht.
+    + exact (wf_well_formed W).
+    + apply halting_state_total_has_no_transitions.
+      rewrite Hacc; exact (wf_accept_halts W).
+    + apply (wf_run_tape W).
+  - eapply no_tile_south_head_glue_halting_fp; try exact Ht.
+    + exact (wf_well_formed W).
+    + apply halting_state_total_has_no_transitions.
+      rewrite Hrej; exact (wf_reject_halts W).
+    + apply (wf_run_tape W).
+Qed.
+
+(** ** The full correspondence and undecidability *)
+
+(** The backward direction requires the UNIQUE EXTENSION property: in any
+    valid full-plane tiling with the start tile at origin, the tiles above
+    must follow the TM computation trace. This is a standard but lengthy
+    inductive argument (see Berger 1966, Robinson 1971).
+
+    The key steps of the backward argument are:
+    1. The start tile at (0,0) has N = head_glue(q0, blank).
+    2. By valid_wang_tiling, the tile at (0,1) must have S = head_glue(q0, blank).
+    3. The only tiles with S = head_glue(q, a) are head tiles for transition(q, a).
+    4. Therefore the tile at (0,1) encodes the first transition step.
+    5. By induction on computation steps, row y+1 encodes step y.
+    6. If M halts at step n, the tile at the head position in row n+1 has
+       N = head_glue(q_halt, a). No tile can sit above it (blocking property).
+    7. This contradicts tiles_plane for position (h, n+2).
+
+    We thread the backward direction as a hypothesis, following the pattern
+    of seeded_hp_undecidable and domino_undecidable_conditional. *)
+
+(** The full correspondence for the origin-constrained domino problem *)
+Definition fp_correspondence (W : WF_TM) : Prop :=
+  origin_constrained_domino (fp_tileset (wf_machine W)) (fp_start_tile (wf_machine W))
+  <-> ~wf_tm_halts_on_blank W.
+
+(** Undecidability of the origin-constrained domino problem *)
+Theorem origin_constrained_undecidable :
+  wf_halting_undecidable ->
+  (forall W : WF_TM, fp_correspondence W) ->
+  ~exists f : TileSet -> TileType -> bool,
+    forall T t0, f T t0 = true <-> origin_constrained_domino T t0.
+Proof.
+  intros Hwf_halt Hcorr Hdec; destruct Hdec as [f Hf].
+  apply Hwf_halt.
+  exists (fun W => negb (f (fp_tileset (wf_machine W)) (fp_start_tile (wf_machine W)))).
+  intro W; simpl.
+  split; intro H.
+  - (* negb (f ...) = true -> halts *)
+    apply negb_true_iff in H.
+    apply NNPP; intro Hnhalt.
+    assert (Htile : origin_constrained_domino
+              (fp_tileset (wf_machine W)) (fp_start_tile (wf_machine W))).
+    { apply Hcorr; exact Hnhalt. }
+    apply Hf in Htile; rewrite Htile in H; discriminate.
+  - (* halts -> negb (f ...) = true *)
+    apply negb_true_iff.
+    destruct (f (fp_tileset (wf_machine W)) (fp_start_tile (wf_machine W))) eqn:E;
+      [|reflexivity].
+    exfalso.
+    assert (Htile : origin_constrained_domino
+              (fp_tileset (wf_machine W)) (fp_start_tile (wf_machine W))).
+    { apply Hf; exact E. }
+    apply Hcorr in Htile; contradiction.
+Qed.
+
+(** ** Reduction: origin-constrained domino reduces to the general domino problem *)
+
+(** If the general domino problem is decidable, then the origin-constrained
+    version is also decidable. The reduction works as follows:
+
+    Given a tileset T and a tile t0, we construct a new tileset T' such that
+    domino_problem T' holds iff origin_constrained_domino T t0 holds.
+
+    The construction adds "marker" tiles that create a unique signal
+    propagating from the origin. We use a simpler approach: we observe
+    that origin_constrained_domino T t0 implies domino_problem T
+    (by forgetting the origin constraint). For the converse, we use
+    the fact that if domino_problem T holds and t0 is in T, then we can
+    shift any valid tiling so that t0 appears at any position — but this
+    only works if t0 actually appears in some valid tiling.
+
+    The clean reduction: add a "unique origin" signal to T that forces
+    exactly one copy of t0 to appear. This uses the standard marker tile
+    construction from computability theory.
+
+    For our purposes, the important direction is:
+    origin_constrained_domino undecidable => general domino undecidable.
+    This follows because origin_constrained_domino T t0 implies
+    domino_problem T (just forget the origin constraint). *)
+
+(** Forward reduction: origin-constrained implies general *)
+Lemma origin_constrained_implies_domino : forall T t0,
+  origin_constrained_domino T t0 -> domino_problem T.
+Proof.
+  intros T t0 [W [Hplane [Hvalid [Htiles Horigin]]]].
+  exists W; split; [exact Hplane | split; [exact Hvalid | exact Htiles]].
+Qed.
+
+(** Contrapositive: if general domino is decidable, then for any tileset,
+    we can at least decide whether ANY tiling exists. If we can also enumerate
+    tiles to check as origin constraints, we can decide the origin-constrained
+    version. *)
+
+(** ** The general domino problem is undecidable *)
+
+(** We derive undecidability of the general domino problem from
+    undecidability of the origin-constrained version. The key:
+    if we could decide domino_problem for all tilesets, we could
+    decide origin_constrained_domino too, since:
+    origin_constrained_domino T t0 <-> domino_problem (T_marked t0)
+    where T_marked adds a unique-position marker for t0. *)
+
+(** Auxiliary: the domino problem with a specific tile occurrence *)
+Definition domino_with_tile (T : TileSet) (t0 : TileType) : Prop :=
+  exists W, tiles_plane W /\ valid_wang_tiling W /\
+    (forall p t, tile_at W p = Some t -> In t T) /\
+    (exists p, tile_at W p = Some t0).
+
+(** origin_constrained implies domino_with_tile (shift the origin) *)
+Lemma origin_constrained_implies_with_tile : forall T t0,
+  origin_constrained_domino T t0 -> domino_with_tile T t0.
+Proof.
+  intros T t0 [W [Hp [Hv [Ht Ho]]]].
+  exists W; split; [exact Hp | split; [exact Hv | split; [exact Ht |]]].
+  exists (0%Z, 0%Z); exact Ho.
+Qed.
+
+(** glue_facing is translation-invariant: it depends only on the direction
+    from p1 to p2, not on absolute coordinates. *)
+Lemma Z_eqb_add_cancel : forall a b c : Z,
+  ((a + c =? b + c)%Z = (a =? b)%Z).
+Proof.
+  intros a b c.
+  destruct (a =? b)%Z eqn:E.
+  - apply Z.eqb_eq in E; subst; apply Z.eqb_refl.
+  - apply Z.eqb_neq in E; apply Z.eqb_neq; lia.
+Qed.
+
+Lemma glue_facing_translate : forall t x1 y1 x2 y2 dx dy,
+  glue_facing t ((x1 + dx)%Z, (y1 + dy)%Z) ((x2 + dx)%Z, (y2 + dy)%Z) =
+  glue_facing t (x1, y1) (x2, y2).
+Proof.
+  intros t x1 y1 x2 y2 dx dy.
+  unfold glue_facing; simpl.
+  (* All pos_eq comparisons reduce via Z_eqb_add_cancel *)
+  rewrite (Z_eqb_add_cancel x2 x1 dx).
+  replace (y1 + dy + 1)%Z with ((y1 + 1) + dy)%Z by lia.
+  rewrite (Z_eqb_add_cancel y2 (y1 + 1) dy).
+  replace (x1 + dx + 1)%Z with ((x1 + 1) + dx)%Z by lia.
+  rewrite (Z_eqb_add_cancel x2 (x1 + 1) dx).
+  rewrite (Z_eqb_add_cancel y2 y1 dy).
+  replace (y1 + dy - 1)%Z with ((y1 - 1) + dy)%Z by lia.
+  rewrite (Z_eqb_add_cancel y2 (y1 - 1) dy).
+  replace (x1 + dx - 1)%Z with ((x1 - 1) + dx)%Z by lia.
+  rewrite (Z_eqb_add_cancel x2 (x1 - 1) dx).
+  reflexivity.
+Qed.
+
+(** domino_with_tile implies origin_constrained (translate the tiling) *)
+Lemma with_tile_implies_origin_constrained : forall T t0,
+  domino_with_tile T t0 -> origin_constrained_domino T t0.
+Proof.
+  intros T t0 [W [Hp [Hv [Ht [p0 Hp0]]]]].
+  destruct p0 as [x0 y0].
+  (* Translate W so that (x0,y0) maps to the origin *)
+  set (W' := fun p : Position =>
+    let '(x, y) := p in
+    W ((x + x0)%Z, (y + y0)%Z)).
+  exists W'.
+  split; [| split; [| split]].
+  - (* tiles_plane *)
+    intros [x y].
+    destruct (Hp ((x + x0)%Z, (y + y0)%Z)) as [t' Ht'].
+    exists t'; exact Ht'.
+  - (* valid_wang_tiling *)
+    intros [x1 y1] [x2 y2] Hadj.
+    unfold tile_at, W'.
+    assert (Hadj' : adjacent ((x1 + x0)%Z, (y1 + y0)%Z) ((x2 + x0)%Z, (y2 + y0)%Z)).
+    { unfold adjacent, neighbors, all_directions in *; simpl in *.
+      destruct Hadj as [Heq | [Heq | [Heq | [Heq | []]]]]; injection Heq as <- <-.
+      - left; f_equal; lia.
+      - right; left; f_equal; lia.
+      - right; right; left; f_equal; lia.
+      - right; right; right; left; f_equal; lia. }
+    specialize (Hv _ _ Hadj').
+    unfold tile_at in Hv.
+    destruct (W ((x1 + x0)%Z, (y1 + y0)%Z)) as [t1|]; [|exact I].
+    destruct (W ((x2 + x0)%Z, (y2 + y0)%Z)) as [t2|]; [|exact I].
+    (* glue_facing at translated positions = glue_facing at original positions *)
+    rewrite glue_facing_translate with (dx := x0) (dy := y0) in Hv.
+    rewrite glue_facing_translate with (dx := x0) (dy := y0) in Hv.
+    destruct (glue_facing t1 (x1, y1) (x2, y2)); [|exact I].
+    destruct (glue_facing t2 (x2, y2) (x1, y1)); [|exact I].
+    exact Hv.
+  - (* all tiles from T *)
+    intros [x y] t' Ht'.
+    unfold tile_at, W' in Ht'.
+    apply (Ht ((x + x0)%Z, (y + y0)%Z)); exact Ht'.
+  - (* origin = t0 *)
+    unfold tile_at, W'; simpl.
+    replace (0 + x0)%Z with x0 by lia.
+    replace (0 + y0)%Z with y0 by lia.
+    exact Hp0.
+Qed.
+
+(** Equivalence: origin_constrained_domino T t0 <-> domino_with_tile T t0 *)
+Theorem origin_constrained_iff_with_tile : forall T t0,
+  origin_constrained_domino T t0 <-> domino_with_tile T t0.
+Proof.
+  intros T t0; split.
+  - exact (origin_constrained_implies_with_tile T t0).
+  - exact (with_tile_implies_origin_constrained T t0).
+Qed.
+
+(** ** General domino problem undecidability *)
+
+(** The general domino problem is undecidable. We derive this from
+    the undecidability of origin_constrained_domino.
+
+    The key: for our tileset fp_tileset M, the start tile is always
+    in the tileset. If we can decide domino_problem for fp_tileset M,
+    we can test each tile as a potential origin constraint. More directly:
+    since the forward direction of our correspondence only uses the start
+    tile at the origin, domino_problem (fp_tileset M) is implied by
+    origin_constrained_domino (fp_tileset M) (fp_start_tile M). *)
+
+(** The forward direction for the general domino problem: non-halting implies tileable *)
+Corollary non_halting_fp_domino : forall (W : WF_TM),
+  tm_never_halts (wf_machine W) ->
+  domino_problem (fp_tileset (wf_machine W)).
+Proof.
+  intros W Hnh.
+  apply (origin_constrained_implies_domino _ (fp_start_tile (wf_machine W))).
+  exact (non_halting_fp_tileable W Hnh).
+Qed.
+
+(** The general domino problem is undecidable, conditional on the full
+    correspondence for origin-constrained tilings.
+
+    The reduction: given a tileset T and a potential decider f for
+    domino_problem, we can decide origin_constrained_domino as follows:
+    origin_constrained_domino T t0 implies domino_problem T (by forgetting
+    the origin constraint). For the reverse: if domino_problem T holds,
+    then there exists a valid tiling; if that tiling uses t0 somewhere
+    (guaranteed by the construction), we can translate it to place t0 at
+    the origin.
+
+    For our specific tilesets fp_tileset M, the argument is simpler:
+    the copy tiles alone tile the plane (giving domino_problem),
+    and this holds regardless of halting. The non-trivial direction is
+    that halting implies no origin-constrained tiling (proved via the
+    blocking property). So we structure the undecidability proof at
+    the level of fp_tileset directly. *)
+
+(** The full-plane correspondence for the general domino problem.
+    This uses a STRENGTHENED backward direction: halting implies no valid
+    tiling that includes the start tile. Since any computation-encoding
+    tiling must include the start tile (to seed the head position),
+    this implies that if M halts, no tiling exists that encodes the
+    computation — though inert (copy-only) tilings may still exist.
+
+    For the general domino problem (which asks if ANY tiling exists),
+    we cannot rule out copy-only tilings even when M halts. Therefore
+    the general domino problem for fp_tileset requires the
+    origin-constrained variant as an intermediate step.
+
+    The undecidability chain:
+    1. origin_constrained_domino (fp_tileset M) (fp_start_tile M)
+       <-> ~tm_halts_on_blank M  (the correspondence, forward proved)
+    2. This is undecidable (by reduction from halting)
+    3. origin_constrained_domino reduces to the general domino problem
+       (via domino_with_tile, which reduces to domino_problem for
+        tilesets that contain the distinguished tile)
+*)
+
+(** Decidability of the general domino problem would decide origin-constrained
+    for all tilesets where the origin tile appears in some valid tiling.
+    We prove this formally for our specific construction. *)
+
+(** If domino_problem is decidable, origin_constrained_domino is decidable
+    for tilesets where every tile appears in at least one valid tiling
+    of some sub-tileset. The cleanest route: for fp_tileset, we know the
+    start tile IS in the tileset, and we proved that the copy-only tiling
+    is always valid. So domino_problem (fp_tileset M) is ALWAYS true. *)
+
+Lemma fp_domino_always_holds : forall (W : WF_TM),
+  domino_problem (fp_tileset (wf_machine W)).
+Proof.
+  intros W.
+  (* The copy-only tiling works for any well-formed TM *)
+  exists (fun _ => Some (wang_copy blank)).
+  split; [| split].
+  - intros p; exists (wang_copy blank); reflexivity.
+  - intros p1 p2 Hadj; unfold tile_at; simpl.
+    unfold adjacent, neighbors, all_directions in Hadj; simpl in Hadj.
+    destruct Hadj as [<- | [<- | [<- | [<- | []]]]].
+    + destruct (glue_facing_N_S (wang_copy blank) (wang_copy blank) (fst p1) (snd p1)) as [HN HS].
+      destruct p1; simpl in *; rewrite HN, HS; simpl; reflexivity.
+    + destruct (glue_facing_E_W (wang_copy blank) (wang_copy blank) (fst p1) (snd p1)) as [HE HW].
+      destruct p1; simpl in *; rewrite HE, HW; simpl; reflexivity.
+    + destruct (glue_facing_south (wang_copy blank) (wang_copy blank) (fst p1) (snd p1)) as [HS HN].
+      destruct p1; simpl in *; rewrite HS, HN; simpl; reflexivity.
+    + destruct (glue_facing_west (wang_copy blank) (wang_copy blank) (fst p1) (snd p1)) as [HW HE].
+      destruct p1; simpl in *; rewrite HW, HE; simpl; reflexivity.
+  - intros p t Ht; unfold tile_at in Ht; injection Ht as <-.
+    apply wang_copy_in_fp; exact (wf_blank_in_alphabet W).
+Qed.
+
+(** Since domino_problem (fp_tileset M) is always true, it cannot carry
+    information about halting. The origin-constrained version does carry
+    this information. The undecidability of the general domino problem
+    follows from the GENERAL reduction, not from fp_tileset specifically.
+
+    We prove the general undecidability result: if origin_constrained_domino
+    is undecidable, then domino_problem is undecidable, because a decider
+    for domino_problem would yield a decider for domino_with_tile (by
+    checking each tile type as a potential witness). *)
+
+(** A decider for domino_problem, combined with tile enumeration, decides
+    whether a specific tile appears in some valid tiling.
+
+    Note: a direct reduction from fp_correspondence to general domino
+    undecidability is not possible because fp_tileset always admits
+    a copy-only tiling (fp_domino_always_holds). The general domino
+    problem for fp_tileset is trivially decidable (always true).
+    Undecidability of the general domino problem requires a tileset
+    that prevents inert tilings entirely. *)
+
+(** The general domino problem undecidability requires a Berger-style
+    tileset where copy-only tilings are impossible. This requires adding
+    aperiodicity-enforcing tiles (as in Robinson 1971 or Berger 1966).
+
+    For our formalization, we take the standard approach: define a
+    berger_tileset M that ONLY tiles the plane when M doesn't halt,
+    with no inert tiling possible. This is the content of the classical
+    Berger/Robinson construction.
+
+    We state this as a hypothesis (the "Berger correspondence") and
+    derive the general domino undecidability cleanly. *)
+
+Definition berger_correspondence : Prop :=
+  exists (berger_tiles : WF_TM -> TileSet),
+    forall W : WF_TM,
+      domino_problem (berger_tiles W) <-> ~wf_tm_halts_on_blank W.
+
+(** Under the Berger correspondence, the general domino problem is undecidable *)
+Theorem general_domino_undecidable :
+  wf_halting_undecidable ->
+  berger_correspondence ->
+  ~exists f : TileSet -> bool, forall T, f T = true <-> domino_problem T.
+Proof.
+  intros Hwf_halt [berger_tiles Hbc] [f Hf].
+  apply Hwf_halt.
+  exists (fun W => negb (f (berger_tiles W))).
+  intro W; rewrite negb_true_iff; split; intro H.
+  - apply NNPP; intro Hnhalt.
+    assert (Htile : domino_problem (berger_tiles W)) by (apply Hbc; exact Hnhalt).
+    apply Hf in Htile; rewrite Htile in H; discriminate.
+  - destruct (f (berger_tiles W)) eqn:E; [|reflexivity].
+    exfalso.
+    assert (Htile : domino_problem (berger_tiles W)) by (apply Hf; exact E).
+    apply (Hbc W) in Htile; contradiction.
+Qed.
+
+(** ** Connecting origin-constrained to the general domino problem *)
+
+(** The origin-constrained domino problem is at least as hard as
+    the general domino problem: any Berger tileset can be wrapped
+    with a distinguished origin tile.
+
+    Conversely, the general domino problem is at least as hard as
+    the origin-constrained version: for our specific construction,
+    origin_constrained_domino is undecidable. *)
+
+(** The Berger correspondence implies the fp_correspondence,
+    since any Berger-style tileset can be equipped with an origin tile. *)
+
+(** The general and origin-constrained problems are inter-reducible:
+    1. origin_constrained T t0 -> domino T  (trivial: forget the constraint)
+    2. domino T -> origin_constrained T t  for some t in T
+       (if T tiles the plane, some tile must appear; translate to origin) *)
+
+Lemma domino_implies_some_origin_constrained : forall T,
+  domino_problem T ->
+  T <> nil ->
+  exists t0, In t0 T /\ origin_constrained_domino T t0.
+Proof.
+  intros T [W [Hp [Hv Ht]]] Hne.
+  destruct (Hp (0%Z, 0%Z)) as [t0 Ht0].
+  exists t0; split.
+  - apply (Ht (0%Z, 0%Z)); exact Ht0.
+  - exists W; split; [exact Hp | split; [exact Hv | split; [exact Ht | exact Ht0]]].
+Qed.
+
+(** ** Summary of Section 17 *)
+
+(** New definitions:
+    - origin_constrained_domino T t0: the origin-constrained domino problem
+    - fp_start_tile M: bridge tile connecting copy region to computation
+    - fp_tileset M: full-plane tileset (hp tiles + start tile)
+    - fp_wang_tiling M: full Z^2 tiling for non-halting TMs
+    - fp_correspondence: the iff between tilability and non-halting
+    - berger_correspondence: the standard Berger tileset existence
+
+    Proved results:
+    1. non_halting_fp_tileable: non-halting TM -> origin-constrained Z^2
+       tiling exists (FULLY PROVED, ~200 lines)
+    2. no_tile_south_halting_fp: blocking property for fp_tileset
+       (no tile has S = head_glue for halting state, FULLY PROVED)
+    3. origin_constrained_undecidable: the origin-constrained domino
+       problem is undecidable (conditional on fp_correspondence, PROVED)
+    4. glue_facing_translate: Wang tiling glue matching is
+       translation-invariant (FULLY PROVED)
+    5. origin_constrained_iff_with_tile: origin constraint is equivalent
+       to requiring a tile appears somewhere (FULLY PROVED, via
+       translation of tilings)
+    6. fp_domino_always_holds: fp_tileset always admits a tiling
+       (copy-only, FULLY PROVED)
+    7. general_domino_undecidable: the general domino problem is
+       undecidable (conditional on berger_correspondence, PROVED)
+    8. domino_implies_some_origin_constrained: domino problem implies
+       origin-constrained for some tile (FULLY PROVED) *)
