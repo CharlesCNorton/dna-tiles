@@ -7182,3 +7182,172 @@ Qed.
     This appears to require arguments about cooperative binding geometry
     that go beyond glue-counting. *)
 
+(** * Section 28: Corrected Kleene Recursion Theorem *)
+
+(** ** Motivation
+
+    The original [kleene_recursion_theorem] (Section 15) quantified over
+    ALL functions [g : TM -> TM], including non-computable ones like
+    [halting_flip].  As [kleene_recursion_theorem_refuted] shows, that
+    unrestricted statement is false.
+
+    The genuine Kleene recursion theorem restricts to COMPUTABLE
+    transformations.  In a setting without Goedel encoding or a universal
+    TM, we capture computability through a decidability side-condition:
+    [g] is admissible if the halting behaviour of [g M] is uniformly
+    decidable (i.e., there exists a boolean function [fg] that correctly
+    classifies whether [g M] halts, for every [M]).
+
+    Any function built from syntactic manipulation of TMs (rewriting
+    states, adding transitions, composing machines, etc.) satisfies this
+    condition whenever halting of the resulting machines is decidable.
+    The non-computable [halting_flip] does NOT satisfy the condition,
+    because deciding halts(halting_flip M) requires deciding halts(M).
+
+    We prove two theorems:
+
+    1. [kleene_restricted_from_halting_undecidable]:
+       halting undecidability implies the restricted Kleene theorem.
+
+    2. [halting_undecidable_from_kleene_restricted]:
+       the restricted Kleene theorem implies halting undecidability.
+
+    Together these establish that the corrected Kleene recursion theorem
+    is logically equivalent to the undecidability of the halting problem. *)
+
+(** ** The restricted Kleene recursion theorem *)
+
+Definition kleene_restricted : Prop :=
+  forall (g : TM -> TM),
+    (exists fg : TM -> bool,
+       forall M, fg M = true <-> tm_halts_on_blank (g M)) ->
+    exists M : TM, tm_halts_on_blank M <-> tm_halts_on_blank (g M).
+
+(** Direction 1: halting undecidability implies the restricted Kleene theorem.
+
+    Proof sketch: Given [g] with decidable image halting via [fg], suppose
+    for contradiction that no fixed point exists.  Then for every M,
+    halts(M) and halts(g M) disagree, so halts(M) <-> ~halts(g M) <->
+    (fg M = false).  The function [fun M => negb (fg M)] then decides
+    halting, contradicting [halting_undecidable]. *)
+
+Lemma no_fixpoint_xor :
+  forall (g : TM -> TM) (M : TM),
+    ~(tm_halts_on_blank M <-> tm_halts_on_blank (g M)) ->
+    (tm_halts_on_blank M -> ~tm_halts_on_blank (g M)) /\
+    (tm_halts_on_blank (g M) -> ~tm_halts_on_blank M).
+Proof.
+  intros g M Hnofp.
+  split.
+  - intros Hh HgM. apply Hnofp. tauto.
+  - intros HgM Hh. apply Hnofp. tauto.
+Qed.
+
+Lemma negb_true_iff_halts_aux :
+  forall (g : TM -> TM) (fg : TM -> bool) (M : TM),
+    (fg M = true <-> tm_halts_on_blank (g M)) ->
+    ~(tm_halts_on_blank M <-> tm_halts_on_blank (g M)) ->
+    negb (fg M) = true <-> tm_halts_on_blank M.
+Proof.
+  intros g fg M Hfg Hnofp.
+  pose proof (no_fixpoint_xor g M Hnofp) as [Hfwd Hbwd].
+  destruct (fg M) eqn:Efg.
+  - simpl. split.
+    + discriminate.
+    + intro Hhalts. exfalso. exact (Hfwd Hhalts (proj1 Hfg eq_refl)).
+  - simpl. split.
+    + intro Htrue. apply NNPP. intro HnhM.
+      assert (HngM : ~tm_halts_on_blank (g M)).
+      { intro HgM. apply Hfg in HgM. discriminate. }
+      apply Hnofp. split.
+      * intro Habs. contradiction.
+      * intro HgM. contradiction.
+    + intro Hhalts. reflexivity.
+Qed.
+
+Lemma negb_fg_decides_halting :
+  forall (g : TM -> TM) (fg : TM -> bool),
+    (forall M, fg M = true <-> tm_halts_on_blank (g M)) ->
+    (forall M, ~(tm_halts_on_blank M <-> tm_halts_on_blank (g M))) ->
+    forall M, negb (fg M) = true <-> tm_halts_on_blank M.
+Proof.
+  intros g fg Hfg Hnofp M.
+  exact (negb_true_iff_halts_aux g fg M (Hfg M) (Hnofp M)).
+Qed.
+
+Theorem kleene_restricted_from_halting_undecidable :
+  halting_undecidable -> kleene_restricted.
+Proof.
+  intros Hundec g [fg Hfg].
+  destruct (classic (exists M, tm_halts_on_blank M <-> tm_halts_on_blank (g M)))
+    as [Hyes | Hno].
+  - exact Hyes.
+  - exfalso. apply Hundec.
+    assert (Hnofp : forall M0, ~(tm_halts_on_blank M0 <-> tm_halts_on_blank (g M0))).
+    { intros M0 Hfp. apply Hno. exists M0. exact Hfp. }
+    exists (fun M => negb (fg M)).
+    exact (negb_fg_decides_halting g fg Hfg Hnofp).
+Qed.
+
+(** Direction 2: the restricted Kleene theorem implies halting undecidability.
+
+    Proof sketch: Assume a decider [f] for halting exists.  Define
+    [g M := if f M then never_halting_tm else always_halting_tm].
+    The image halting of [g] is decidable via [negb . f]:
+      [g M] halts <-> [f M = false] <-> [negb (f M) = true].
+    By [kleene_restricted], [g] has a fixed point [M0].  Case analysis
+    on [f M0] gives a contradiction in both branches. *)
+
+Theorem halting_undecidable_from_kleene_restricted :
+  kleene_restricted -> halting_undecidable.
+Proof.
+  intros Hkleene [f Hf].
+  (* Define g: flip the halting behavior according to f *)
+  pose (g := fun M : TM => if f M then never_halting_tm else always_halting_tm).
+  (* Show g's image halting is decidable *)
+  assert (Hdec : exists fg : TM -> bool,
+            forall M, fg M = true <-> tm_halts_on_blank (g M)).
+  { exists (fun M => negb (f M)).
+    intro M; unfold g.
+    destruct (f M) eqn:Efm; simpl.
+    - (* f M = true, so g M = never_halting_tm *)
+      split.
+      + intro Habs; discriminate.
+      + intro Hnh; exfalso; exact (never_halting_tm_not_halts Hnh).
+    - (* f M = false, so g M = always_halting_tm *)
+      split.
+      + intros; exact always_halting_tm_halts.
+      + intros; reflexivity. }
+  (* Apply kleene_restricted to get a fixed point *)
+  destruct (Hkleene g Hdec) as [M0 Hfp].
+  (* Case analysis on f M0 *)
+  destruct (f M0) eqn:HfM0.
+  - (* f M0 = true: decider says M0 halts *)
+    assert (HM0_halts : tm_halts_on_blank M0) by (apply Hf; exact HfM0).
+    assert (HgM0 : g M0 = never_halting_tm) by (unfold g; rewrite HfM0; reflexivity).
+    apply Hfp in HM0_halts.
+    rewrite HgM0 in HM0_halts.
+    exact (never_halting_tm_not_halts HM0_halts).
+  - (* f M0 = false: decider says M0 doesn't halt *)
+    assert (HM0_not_halts : ~tm_halts_on_blank M0).
+    { intro H; apply Hf in H; rewrite H in HfM0; discriminate. }
+    assert (HgM0 : g M0 = always_halting_tm) by (unfold g; rewrite HfM0; reflexivity).
+    apply HM0_not_halts.
+    apply Hfp.
+    rewrite HgM0.
+    exact always_halting_tm_halts.
+Qed.
+
+(** ** Equivalence *)
+
+(** The restricted Kleene recursion theorem is logically equivalent to
+    the undecidability of the halting problem. *)
+
+Theorem kleene_restricted_iff_halting_undecidable :
+  kleene_restricted <-> halting_undecidable.
+Proof.
+  split.
+  - exact halting_undecidable_from_kleene_restricted.
+  - exact kleene_restricted_from_halting_undecidable.
+Qed.
+
