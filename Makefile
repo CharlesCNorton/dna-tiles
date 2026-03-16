@@ -4,7 +4,7 @@ all: $(COQMAKEFILE)
 	$(MAKE) -f $(COQMAKEFILE)
 
 $(COQMAKEFILE): _CoqProject
-	coq_makefile -f _CoqProject -o $(COQMAKEFILE)
+	rocq makefile -f _CoqProject -o $(COQMAKEFILE) 2>/dev/null || coq_makefile -f _CoqProject -o $(COQMAKEFILE)
 
 clean:
 	if [ -f $(COQMAKEFILE) ]; then $(MAKE) -f $(COQMAKEFILE) clean; fi

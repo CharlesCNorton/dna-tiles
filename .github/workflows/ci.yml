@@ -18,10 +18,8 @@ jobs:
           opam init --bare --no-setup --disable-sandboxing
           opam switch create . ocaml-base-compiler.4.14.2 --no-install
           eval $(opam env --switch=. --set-switch)
-          opam install rocq-core.9.0.0 rocq-stdlib.9.0.0 -y
+          opam install rocq.9.0.0 -y
       - name: Build
         run: |
           eval $(opam env --switch=. --set-switch)
-          which coq_makefile || echo "NOT FOUND"
-          ls _opam/bin/ | head -20
           make
