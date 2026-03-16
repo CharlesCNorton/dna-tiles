@@ -8,18 +8,15 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install opam and Rocq
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y opam
-          opam init --bare --no-setup --disable-sandboxing
-          opam switch create . ocaml-base-compiler.4.14.2 --no-install
-          eval $(opam env --switch=. --set-switch)
-          opam install rocq.9.0.0 -y
       - name: Build
-        run: |
-          eval $(opam env --switch=. --set-switch)
-          make
+        uses: coq-community/docker-coq-action@v1
+        with:
+          coq_version: "9.0"
+          ocaml_version: "4.14-flambda"
+          custom_script: |
+            startGroup "Build"
+              opam exec -- make
+            endGroup
